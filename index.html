@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>출근길 감 테스트 — 출근길 숫자, 당신의 감은 몇 점?</title>
+<meta name="description" content="공개 데이터로 만든 추측 게임. 10개 주제, 주제당 5문항.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<main id="app">
+
+  <!-- 주제 고르기 ──────────────────────────────── -->
+  <section id="view-home" class="view">
+    <p id="shared-banner" class="banner" hidden></p>
+    <div class="hero">
+      <div class="badge-day">공개 데이터</div>
+      <h1 id="title">출근길 감 테스트</h1>
+      <p id="subtitle" class="muted"></p>
+    </div>
+    <p id="progress-note" class="fineprint" style="text-align:left"></p>
+    <div id="topic-grid" class="grid"></div>
+    <p class="fineprint">모든 숫자는 공개 데이터에서 직접 계산했습니다.
+      정답 옆의 <b>근거 보기</b>를 누르면 어떻게 셌는지 나옵니다.</p>
+  </section>
+
+  <!-- 문항 ───────────────────────────────────── -->
+  <section id="view-quiz" class="view" hidden>
+    <button id="btn-back" class="linkish">← 주제 고르기</button>
+    <p id="topic-name" class="muted small"></p>
+    <div class="progress"><div id="progress-bar"></div></div>
+    <p id="q-count" class="muted small"></p>
+    <h2 id="q-text"></h2>
+
+    <div id="q-choice" class="choices" hidden></div>
+
+    <div id="q-slider" hidden>
+      <output id="slider-out" class="slider-out"></output>
+      <input type="range" id="slider" aria-label="추측 값">
+      <div class="slider-ends"><span id="slider-min"></span><span id="slider-max"></span></div>
+    </div>
+
+    <button id="btn-next" class="primary" disabled>다음</button>
+  </section>
+
+  <!-- 결과 ───────────────────────────────────── -->
+  <section id="view-result" class="view" hidden>
+    <p id="result-topic" class="muted small"></p>
+    <div class="score-card">
+      <div id="grade-emoji" class="grade-emoji"></div>
+      <div id="score" class="score"></div>
+      <div id="grade" class="grade"></div>
+    </div>
+
+    <div id="ai-comment" class="ai" hidden></div>
+
+    <div id="cards"></div>
+
+    <div id="caveat" class="caveat" hidden></div>
+    <p id="source" class="fineprint"></p>
+
+    <div class="actions">
+      <button id="btn-share" class="primary">친구에게 보내기</button>
+      <button id="btn-more" class="ghost">다른 주제 풀기</button>
+    </div>
+  </section>
+
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

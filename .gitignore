@@ -1,0 +1,7 @@
+data/
+tools/정답지.md
+__pycache__/
+*.pyc
+.env
+.vercel/
+시안.png

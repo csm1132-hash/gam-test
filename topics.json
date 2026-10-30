@@ -1,0 +1,132 @@
+{
+  "title": "출근길 감 테스트",
+  "subtitle": "출근길 숫자, 당신의 감은 몇 점?",
+  "grades": [
+    {
+      "min": 90,
+      "name": "촉이 데이터급",
+      "emoji": "🎯"
+    },
+    {
+      "min": 70,
+      "name": "감이 좋은 편",
+      "emoji": "📊"
+    },
+    {
+      "min": 50,
+      "name": "보통의 감각",
+      "emoji": "🙂"
+    },
+    {
+      "min": 30,
+      "name": "느낌대로 삽니다",
+      "emoji": "🎲"
+    },
+    {
+      "min": 0,
+      "name": "감은 접어두시죠",
+      "emoji": "🙈"
+    }
+  ],
+  "reactions_choice": {
+    "hit": "맞히셨습니다",
+    "miss": "다들 그렇게 찍습니다"
+  },
+  "reactions": [
+    {
+      "max": 5,
+      "text": "촉이 좋으시네요"
+    },
+    {
+      "max": 20,
+      "text": "비슷하게 보셨습니다"
+    },
+    {
+      "max": 60,
+      "text": "음…"
+    },
+    {
+      "max": 999,
+      "text": "꽤 멀리 가셨습니다"
+    }
+  ],
+  "topics": [
+    {
+      "id": "seoul-heat",
+      "emoji": "🌡️",
+      "title": "서울은 얼마나 더워졌나",
+      "blurb": "1950년부터 2024년까지, 서울의 매일 기온",
+      "source": "Open-Meteo Archive (ERA5 재분석)"
+    },
+    {
+      "id": "seoul-rain",
+      "emoji": "☔",
+      "title": "비는 언제, 얼마나",
+      "blurb": "서울의 하루치 강수량 30년",
+      "source": "Open-Meteo Archive (ERA5 재분석)"
+    },
+    {
+      "id": "seoul-air",
+      "emoji": "😷",
+      "title": "미세먼지, 언제 나쁜가",
+      "blurb": "서울의 시간별 초미세먼지 2년치",
+      "source": "Open-Meteo Air Quality (CAMS)"
+    },
+    {
+      "id": "working-hours",
+      "emoji": "⏰",
+      "title": "우리는 얼마나 일하나",
+      "blurb": "나라별 1인당 연간 노동시간",
+      "source": "Our World in Data"
+    },
+    {
+      "id": "population",
+      "emoji": "👶",
+      "title": "인구와 출산",
+      "blurb": "전 세계 출산율과 한국의 인구 구조",
+      "source": "World Bank Open Data"
+    },
+    {
+      "id": "internet",
+      "emoji": "🌐",
+      "title": "인터넷과 연결",
+      "blurb": "나라별 인터넷 사용 인구 비율",
+      "source": "World Bank Open Data"
+    },
+    {
+      "id": "usdkrw",
+      "emoji": "💵",
+      "title": "원달러 환율 26년",
+      "blurb": "1999년부터 오늘까지의 원달러 환율",
+      "source": "Frankfurter (유럽중앙은행 고시)"
+    },
+    {
+      "id": "cities",
+      "emoji": "🏙️",
+      "title": "서울·도쿄·런던·싱가포르",
+      "blurb": "네 도시의 30년 평년값 (1991~2020)",
+      "source": "Open-Meteo Archive (ERA5 재분석)"
+    },
+    {
+      "id": "quakes",
+      "emoji": "🌎",
+      "title": "지진은 얼마나 자주",
+      "blurb": "2000~2024년 전 세계 지진 기록",
+      "source": "USGS 지진 카탈로그"
+    },
+    {
+      "id": "life",
+      "emoji": "🩺",
+      "title": "얼마나 오래 사나",
+      "blurb": "나라별 기대수명 1950~현재",
+      "source": "Our World in Data"
+    },
+    {
+      "id": "miss-universe",
+      "emoji": "👑",
+      "title": "미스 유니버스는 어디서 이기나",
+      "blurb": "1952년부터 2025년까지, 미스 유니버스 우승자와 출전국",
+      "source": "Wikipedia (List of Miss Universe titleholders)"
+    }
+  ]
+}

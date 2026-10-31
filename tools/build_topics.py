@@ -1599,6 +1599,14 @@ st_share = WIN_SPORT[st] / win_gold * 100
 _sg = wiki_table("olympics_korea.json", "Medals by Summer Games")
 GAMES = {r[0]: num(r[6]) for r in _sg[1:] if len(r) >= 7 and r[6].isdigit()}
 best = min(GAMES, key=GAMES.get)
+# 가장 최근 하계 대회 — 아직 열리지 않은 대회('future event')는 숫자 순위가 없어 빠진다
+_last = [r for r in _sg[1:] if len(r) >= 7 and r[6].isdigit() and r[0][:4].isdigit()][-1]
+last_name, last_gold = _last[0], num(_last[2])
+CITY_KO = {"Paris": "파리", "Tokyo": "도쿄", "Los Angeles": "로스앤젤레스", "Brisbane": "브리즈번",
+           "Rio de Janeiro": "리우데자네이루", "Seoul": "서울"}
+last_city = last_name[5:]
+assert last_city in CITY_KO, f"{last_city}: CITY_KO 에 한국어 이름을 넣으세요"
+last_ko = f"{last_name[:4]} {CITY_KO[last_city]}"
 
 # 역대 하계 메달표(금메달 순). 소련처럼 없어진 나라도 순위에 들어 있다
 _at = wiki_table("olympics_alltime.json", "Summer Olympics (")
@@ -1629,11 +1637,12 @@ topic(
                " · ".join(f"{SPORT_KO[c]} {SUM_SPORT[c]}개" for c in ol_top[:4]),
                "가장 먼저 떠오르는 종목이 맞을 때도 있습니다. 2위와의 차이까지 "
                "짐작했는지가 감입니다."),
-        slider("ol2", "한국이 하계올림픽에서 딴 금메달은 모두 몇 개일까요?",
-               sum_gold, "개", 0, 300, 1,
-               f"종목별 금메달을 모두 더하면 {sum_gold}개 "
-               f"(그중 {SPORT_KO[ol_top[0]]} {SUM_SPORT[ol_top[0]]}개)",
-               "메달 소식은 대회마다 크게 남지만, 모두 합친 수는 감으로 잡기 어렵습니다."),
+        slider("ol2", f"가장 최근 하계올림픽({last_ko})에서 한국이 딴 금메달은 몇 개일까요?",
+               last_gold, "개", 0, 40, 1,
+               f"{last_ko} 금 {last_gold} · 은 {_last[3]} · 동 {_last[4]}개 "
+               f"(금메달 순 {_last[6]}위) · 역대 하계 금메달은 모두 {sum_gold}개",
+               "메달 소식은 크게 남지만, 금메달이 정확히 몇 개였는지는 기억하기 "
+               "어렵습니다."),
         slider("ol3", "한국의 동계올림픽 금메달 중 쇼트트랙이 차지하는 비율은?",
                st_share, "%", 0, 100, 1,
                f"동계 금메달 {win_gold}개 중 쇼트트랙 {WIN_SPORT[st]}개 = {st_share:.0f}%",
@@ -1673,10 +1682,6 @@ def build_lotto():
     lt_expect = lt_n * 6 / 45
     # 완전히 무작위일 때 한 번호의 출현 횟수가 흔들리는 폭(표준편차)
     lt_sd = (lt_n * 6 / 45 * (1 - 6 / 45)) ** 0.5
-    # 보기: 가장 많이 나온 번호와 '행운의 7' 같은 흔히 고르는 번호.
-    # 순서로 정답이 드러나지 않게 작은 순으로 둔다
-    _decoys = [x for x in (7, 1, 45, 13) if x not in lt_top]
-    lt_opts = sorted(lt_top + _decoys[:max(0, 4 - len(lt_top))])
     won1 = [r for r in LT if r["rnk1WnNope"] > 0]
     lt_avg = mean(r["rnk1WnAmt"] for r in won1) / 1e8                     # 억 원
     lt_most = max(LT, key=lambda r: r["rnk1WnNope"])
@@ -1695,12 +1700,15 @@ def build_lotto():
         "동행복권 로또 6/45 당첨결과",
         "https://www.dhlottery.co.kr/lt645/result",
         [
-            choice("lt1", f"{lt_n:,}회 동안 가장 많이 나온 번호는?",
-                   [f"{x}번" for x in lt_opts], [f"{x}번" for x in lt_top],
-                   " · ".join(f"{x}번 {balls[x]}회" for x in lt_opts)
-                   + f" (번호 하나 평균 {lt_expect:.0f}회)",
-                   "'7'처럼 행운의 번호가 더 자주 나올 것 같지만, 추첨기는 번호의 뜻을 "
-                   "모릅니다.",
+            # '몇 배'는 1과 2 사이라 정수 눈금으로는 고를 수 없다 — 이 문항만 0.1 눈금
+            slider("lt1", "가장 많이 나온 숫자와 가장 적게 나온 숫자는 몇 배 차이 날까요?",
+                   balls[lt_top[0]] / lt_min, "배", 1, 3, 0.1,
+                   f"{lt_n:,}회 동안 가장 많이 나온 {', '.join(f'{x}번' for x in lt_top)} "
+                   f"{balls[lt_top[0]]}회 ÷ 가장 적게 나온 "
+                   f"{', '.join(f'{x}번' for x, c in sorted(balls.items()) if c == lt_min)} "
+                   f"{lt_min}회 = {balls[lt_top[0]] / lt_min:.2f}배",
+                   "'잘 나오는 번호'가 따로 있는 것처럼 보이지만, 완전히 무작위로 뽑아도 "
+                   "번호마다 출현 횟수는 꽤 벌어집니다.",
                    hint=f"힌트: 번호 하나는 평균 {lt_expect:.0f}번 나왔습니다"),
             slider("lt2", "1등 당첨금은 1명당 평균 몇 억 원일까요?",
                    lt_avg, "억 원", 0, 100, 1,
@@ -1774,6 +1782,21 @@ def build_subway():
     # 가장 붐비는 역 보기: 상위 3곳 + '강남'(흔히 1위로 짐작하는 역)
     busy_opts = top(busy, 3) + (["강남"] if "강남" not in top(busy, 3) else top(busy)[3:])
 
+    # 2호선·경부선이 만나는 큰 환승역이라 흔히 1위로 짐작하는 역. 보기에 늘 넣는다
+    EXTRA_STN = "신도림"
+
+    def with_extra(opts):
+        return sorted(set(opts) | {EXTRA_STN})
+
+    def also(d, fmt):
+        """근거에 신도림이 상위 5위 밖이면 따로 붙인다."""
+        if EXTRA_STN in top(d, 5):
+            return ""
+        return f" … {EXTRA_STN} {fmt(d[EXTRA_STN])} ({rank_of(d, EXTRA_STN)}위)"
+
+    def nmen(v):
+        return f"{v:,.0f}명"
+
     tag = "🚇 지하철"
     vs("subway", tag, "하루 승하차가 더 많은 역은?",
        *[(s, busy[s], ppl(busy[s])) for s in ("홍대입구", "강남")])
@@ -1794,11 +1817,12 @@ def build_subway():
         "https://data.seoul.go.kr/",
         [
             choice("sb1", "하루 승하차 인원이 가장 많은 역은?",
-                   sorted(busy_opts), top(busy, 1)[0],
+                   with_extra(busy_opts), top(busy, 1)[0],
                    f"{ym[:4]}년 {int(ym[4:])}월 하루 평균 승하차 " + " · ".join(
-                       f"{s} {ppl(busy[s])}" for s in top(busy, 5)),
-                   "가장 붐빈다고 느끼는 역과 실제로 사람이 가장 많이 드나드는 역은 "
-                   "다를 수 있습니다. 여러 노선이 만나는 역은 이용객이 합쳐집니다."),
+                       f"{s} {ppl(busy[s])}" for s in top(busy, 5)) + also(busy, ppl),
+                   "가장 붐빈다고 느끼는 역과 실제로 개찰구를 드나드는 사람이 많은 역은 "
+                   "다릅니다. 역 안에서 갈아타기만 하는 사람은 세지 않아, 신도림처럼 "
+                   "환승객으로 붐비는 역은 생각보다 아래에 있습니다."),
             slider("sb2", "서울 지하철을 하루에 타는 사람은 평균 몇 만 명일까요?",
                    rides / 10_000, "만 명", 100, 1500, 10,
                    f"{ym[:4]}년 {int(ym[4:])}월 승차 인원 ÷ {days}일 = 하루 {ppl(rides)} "
@@ -1812,15 +1836,15 @@ def build_subway():
                    "겹칩니다." if peak_h >= 17 else
                    "출근 시간은 정해져 있어 한꺼번에 몰리고, 퇴근 시간은 사람마다 흩어집니다."),
             choice("sb4", "출근 시간(7~9시)에 내리는 사람이 가장 많은 역은?",
-                   sorted(top(am_off)), top(am_off, 1)[0],
+                   with_extra(top(am_off)), top(am_off, 1)[0],
                    "7~9시 하루 평균 하차 " + " · ".join(
-                       f"{s} {am_off[s]:,.0f}명" for s in top(am_off, 5)),
+                       f"{s} {am_off[s]:,.0f}명" for s in top(am_off, 5)) + also(am_off, nmen),
                    "출근길 하차가 많은 역은 일터가 몰린 곳입니다. 강남 말고도 큰 업무 "
                    "지구가 여럿 있습니다."),
             choice("sb5", "출근 시간(7~9시)에 타는 사람이 가장 많은 역은?",
-                   sorted(top(am_on)), top(am_on, 1)[0],
+                   with_extra(top(am_on)), top(am_on, 1)[0],
                    "7~9시 하루 평균 승차 " + " · ".join(
-                       f"{s} {am_on[s]:,.0f}명" for s in top(am_on, 5)),
+                       f"{s} {am_on[s]:,.0f}명" for s in top(am_on, 5)) + also(am_on, nmen),
                    "출근길 승차가 많은 역은 사람이 많이 사는 곳, 또는 다른 교통에서 "
                    "갈아타는 곳입니다."),
         ],

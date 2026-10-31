@@ -70,6 +70,8 @@ SEOUL_API_KEY=...      # data.seoul.go.kr → 회원가입 → 인증키 신청
 | `app.js` | 진행 · 채점 · 결과 · 공유. **계산은 전부 여기서 끝납니다** |
 | `topics.json` | 화면 제목 · 주제 목록 · 등급 · 반응 문구 |
 | `topics/*.json` | ★ 주제별 5문항. 정답 · 힌트 · 근거 · 해설 · 한계 |
+| `extras/salary.json` | 내 월급 계산기의 세계 소득 분포 곡선 (`build_topics.py` 가 씁니다) |
+| `extras/versus.json` | 더 많을까 적을까의 짝 문제 (`build_topics.py` 가 씁니다) |
 | `api/comment.py` | Gemini 촌평. 서버가 필요한 유일한 자리 |
 | `tools/fetch_all.py` | 공개 데이터 내려받기 (배포 제외) |
 | `tools/build_topics.py` | 원본 → 문항 계산 (배포 제외) |
@@ -79,7 +81,6 @@ SEOUL_API_KEY=...      # data.seoul.go.kr → 회원가입 → 인증키 신청
 
 | | 주제 | 출처 | 키 |
 |---|---|---|---|
-| 👑 | 미스 유니버스는 어디서 이기나 | Wikipedia · Our World in Data | |
 | 💰 | 돈, 다른 사람들은 얼마나 벌까 | World Bank (PIP · Open Data) · 통계청 가계금융복지조사 | KOSIS (2번만) |
 | 🍜 | 짜장면 값은 얼마나 올랐나 | 통계청 소비자물가조사 | KOSIS |
 | 💍 | 결혼과 이혼 | 통계청 인구동향조사 | KOSIS |
@@ -89,16 +90,25 @@ SEOUL_API_KEY=...      # data.seoul.go.kr → 회원가입 → 인증키 신청
 | 🏅 | 올림픽 메달 | Wikipedia | |
 | 🎰 | 로또, 정말 랜덤일까 | 동행복권 당첨결과 (비공식 경로) | |
 | 🚇 | 출근길 지하철 | 서울 열린데이터광장 | 서울 |
+| 👑 | 미녀가 가장 많은 나라는 어디일까? (미스 유니버스) | Wikipedia · Our World in Data | |
 
 숨겨 둔 주제: 🌡️ 서울 기온 · ☔ 비 · 😷 미세먼지 · ⏰ 노동시간 · 👶 인구와 출산 · 🌐 인터넷 ·
 💵 원달러 환율 · 🏙️ 도시 비교 · 🌎 지진 · 🩺 기대수명
 
+## 홈 화면의 두 놀이
+
+- **💸 내 월급, 세계에선 상위 몇 %?** — 한 달 소득(만 원)을 넣으면 세계은행 PIP 세계 소득
+  분포에서 상위 몇 %인지, 세계 중위값의 몇 배인지 보여 줍니다. **계산은 폰 안에서 끝나고
+  입력한 금액은 어디로도 보내지 않습니다.** 공유할 때도 %만 보냅니다
+- **🆚 더 많을까 적을까?** — 주제마다 계산한 값 둘을 맞붙인 짝(지금 31개) 중 10개를 무작위로
+  냅니다. 왼쪽·오른쪽도 섞습니다. 최고 기록은 그 브라우저에만 남습니다
+
 ## 주제 보이기·숨기기
 
-`tools/build_topics.py` 맨 위의 `SHOWN` 에 들어 있는 주제만 화면 목록에 나옵니다.
+`tools/build_topics.py` 맨 위의 `SHOWN` 에 들어 있는 주제만, **적힌 순서대로** 화면 목록에 나옵니다.
 
 ```python
-SHOWN = {"miss-universe", "money", ...}     # 여기에 "seoul-heat" 같은 id 를 더한다
+SHOWN = ["money", "prices", ..., "miss-universe"]   # "seoul-heat" 같은 id 를 원하는 자리에 넣는다
 ```
 
 고친 뒤 `python tools/build_topics.py` 를 다시 돌리면 `topics.json` 이 바뀝니다. 숨긴 주제도
@@ -122,9 +132,11 @@ Vercel → Settings → Environment Variables
 | 바꾸고 싶은 것 | 어디 |
 |---|---|
 | 문항 · 정답 · 힌트 · 근거 · 해설 · 한계 | `tools/build_topics.py` → 다시 돌리면 `topics/*.json` 갱신 |
-| 화면에 보일 주제 | `tools/build_topics.py` 의 `SHOWN` |
+| 화면에 보일 주제 · 순서 | `tools/build_topics.py` 의 `SHOWN` |
 | 화면 제목 · 부제 | `topics.json` 의 `title` · `subtitle` (다시 계산해도 유지됩니다) |
-| 등급 이름, 반응 문구 | `tools/build_topics.py` 의 `main()` (`topics.json` 에 씁니다) |
+| 등급 이름, 반응 문구 (여러 개 중 무작위) | `tools/build_topics.py` 의 `main()` (`topics.json` 에 씁니다) |
+| 더 많을까 적을까 문제 | 각 주제 계산 옆의 `vs(...)` — 값이 큰 쪽이 정답 |
+| 내 월급 계산기 화면·문구 | `app.js` 의 `calcSalary()` |
 | 점수 계산식 | `app.js` 의 `scoreOne()` |
 | 색 · 여백 · 글꼴 | `style.css` 맨 위의 `:root` |
 

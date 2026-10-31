@@ -37,10 +37,11 @@ OUT = APP / "topics"
 
 TOPICS: list[dict] = []
 
-# 화면의 주제 목록에 내보낼 주제. 나머지도 계산은 그대로 하고 topics/*.json 도 남지만
-# 목록(topics.json)에서 빠져 보이지 않는다. 다시 보이게 하려면 여기에 id 를 더한다
-SHOWN = {"miss-universe", "money", "prices", "marriage", "daily", "happiness",
-         "alcohol", "olympics", "lotto", "subway"}
+# 화면의 주제 목록에 내보낼 주제. **적은 순서대로** 화면에 나온다. 나머지도 계산은 그대로
+# 하고 topics/*.json 도 남지만 목록(topics.json)에서 빠져 보이지 않는다.
+# 다시 보이게 하려면 여기에 id 를 더한다
+SHOWN = ["money", "prices", "marriage", "daily", "happiness",
+         "alcohol", "olympics", "lotto", "subway", "miss-universe"]
 
 
 def load_json(name):
@@ -64,10 +65,19 @@ def wb_countries(rows, year):
 
 
 def owid_countries(rows, year, col):
-    """OWID 도 마찬가지. code 가 비었거나 OWID_ 로 시작하면 집계치다."""
+    """OWID 도 마찬가지. code 가 비었거나 OWID_ 로 시작하면 집계치다.
+    단 코소보는 ISO 코드가 없어 OWID_KOS 로 적혀 있을 뿐 나라다 — 빼면 그 아래 순위가
+    한 칸씩 어긋난다 (세계행복보고서 대만 26위가 25위로 나왔다)."""
     return {r["entity"]: float(r[col]) for r in rows
             if int(r["year"]) == year and r["code"]
-            and not r["code"].startswith("OWID")}
+            and (not r["code"].startswith("OWID") or r["code"] == "OWID_KOS")}
+
+
+def rank_of(values, key, high_first=True):
+    """같은 값은 같은 순위. OWID 는 점수를 소수 둘째 자리로 줘서 동점이 생긴다
+    (한국·콜롬비아 6.04) — 정렬 순서에 맡기면 동점끼리 순위가 갈린다."""
+    v = values[key]
+    return 1 + sum(1 for x in values.values() if (x > v if high_first else x < v))
 
 
 def topic(tid, emoji, title, blurb, source, source_url, questions, caveat=""):
@@ -78,6 +88,19 @@ def topic(tid, emoji, title, blurb, source, source_url, questions, caveat=""):
     TOPICS.append({"id": tid, "emoji": emoji, "title": title, "blurb": blurb,
                    "source": source, "source_url": source_url,
                    "caveat": caveat, "questions": questions})
+
+
+# '더 많을까 적을까' 모드의 문제. 주제마다 계산한 값 둘을 맞붙인다 → extras/versus.json
+VERSUS: list[dict] = []
+KEPT: set[str] = set()          # 원본이 없어 지난번 계산값을 그대로 쓴 주제
+
+
+def vs(tid, tag, q, a, b):
+    """a·b = (이름, 값, 화면에 보일 글자). 값이 큰 쪽이 정답이다. 같으면 문제가 안 된다."""
+    assert a[1] != b[1], f"{q} {a[0]}·{b[0]}: 두 값이 같습니다"
+    VERSUS.append({"tid": tid, "tag": tag, "q": q,
+                   "a": {"label": a[0], "value": round(float(a[1]), 3), "show": a[2]},
+                   "b": {"label": b[0], "value": round(float(b[1]), 3), "show": b[2]}})
 
 
 def slider(qid, text, answer, unit, lo, hi, step, basis, why, hint=None):
@@ -834,8 +857,13 @@ def tally(cnt, n=4, name=ko):
 _twice = f"({'·'.join(map(str, mu_twice))}년 박탈·승계 두 사람 모두 포함)" if mu_twice else ""
 KOR_OPTS = ["한 번도 없다", "1번", "2번", "3번 이상"]
 
+vs("miss-universe", "👑 미스 유니버스", f"{mu_y0}~{mu_y1}년 우승을 더 많이 한 나라는?",
+   *[(ko(c), mu_cnt[c], f"{mu_cnt[c]}회") for c in ("United States", "Venezuela")])
+vs("miss-universe", "👑 미스 유니버스", f"{mu_y0}~{mu_y1}년 우승을 더 많이 한 대륙은?",
+   *[(CONT_KO[c], cont_cnt[c], f"{cont_cnt[c]}회") for c in ("Asia", "Europe")])
+
 topic(
-    "miss-universe", "👑", "미스 유니버스는 어디서 이기나",
+    "miss-universe", "👑", "미녀가 가장 많은 나라는 어디일까?",
     f"{mu_y0}년부터 {mu_y1}년까지, 미스 유니버스 우승자와 출전국",
     "Wikipedia (List of Miss Universe titleholders)",
     "https://en.wikipedia.org/wiki/List_of_Miss_Universe_titleholders",
@@ -942,6 +970,15 @@ sal_pct = below_pct(sal_day)
 med_day = line_at(50)
 med_month = pip_to_won(med_day * 365 / 12, pip_y) / 10_000          # 만 원
 
+# '내 월급 계산기'에 싣는다 → extras/salary.json. 계산은 폰에서 하고 월급은 어디로도 보내지 않는다.
+# 입력은 '올해' 월급이라 가장 최근 물가로 2021년 값으로 되돌린다 (문항 1번은 PIP 해의 물가)
+cpi_y = max(cpi)
+CALC = {"year": pip_y, "cpi_year": cpi_y,
+        "k": 12 / 365 * cpi[2021] / cpi[cpi_y] / ppp[2021],   # 원/월 × k = PIP 달러/일
+        "curve": [[x, round(y, 3)] for x, y in CURVE],          # [하루 달러, 그 아래 사람 %]
+        "median_day": round(med_day, 3),
+        "median_month_won": round(pip_to_won(med_day * 365 / 12, cpi_y))}
+
 
 # 자영업자 소득은 KOSIS(인증키 필요)에서만 받을 수 있다. 키가 없어 원본이 없으면
 # 지난번에 계산해 둔 문항을 그대로 쓴다 — 키 없는 사람도 나머지는 다시 계산할 수 있게
@@ -997,6 +1034,17 @@ big_top5 = " · ".join(f"{BIG_KO.get(c, c)} {BIG[c]:,.0f}달러" for c in big_ra
 jpn_big = big_rank.index("JPN") + 1
 kor_big = big_rank.index("KOR") + 1
 
+
+def usd(v):
+    return f"{v:,.0f}달러"
+
+
+vs("money", "💰 돈", f"{big_y}년 1인당 국민소득이 더 높은 나라는?",
+   ("한국", BIG["KOR"], usd(BIG["KOR"])), ("일본", BIG["JPN"], usd(BIG["JPN"])))
+vs("money", "💰 돈", f"{big_y}년 1인당 국민소득, 더 큰 쪽은?",
+   ("미국 1명", BIG["USA"], usd(BIG["USA"])),
+   ("독일 1명 + 영국 1명", BIG["DEU"] + BIG["GBR"], usd(BIG["DEU"] + BIG["GBR"])))
+
 topic(
     "money", "💰", "돈, 다른 사람들은 얼마나 벌까",
     "내 월급의 세계 순위부터 나라별 국민소득까지",
@@ -1051,6 +1099,7 @@ def topic_or_kept(tid, files, build):
         return
     print(f"  ※ 원본({', '.join(files)})이 없어 '{tid}' 주제는 지난번 계산값을 그대로 씁니다")
     TOPICS.append(json.load(io.open(OUT / f"{tid}.json", encoding="utf-8")))
+    KEPT.add(tid)                 # 이 주제의 '더 많을까' 문제도 지난번 것을 쓴다
 
 
 def kosis_series(name, **match):
@@ -1090,6 +1139,11 @@ def build_prices():
     assert fell, "30년 전보다 값이 내린 보기가 하나도 없습니다 — 보기를 바꾸세요"
     rice = (P["쌀"][y1] / P["쌀"][y1 - 1] - 1) * 100
     total1 = (P["총지수"][y1] / P["총지수"][y1 - 1] - 1) * 100
+
+    for a, b in (("짜장면", "시내버스 요금"), ("라면", "커피(외식)"), ("짜장면", "총지수"),
+                 ("쌀", "소주"), ("택시 요금", "라면")):
+        vs("prices", "🍜 물가", f"{y0}→{y1}년, 값이 더 많이 오른 것은?",
+           *[(k.replace("총지수", "물가 전체"), up(k, 30), f"{up(k, 30):+.0f}%") for k in (a, b)])
 
     topic(
         "prices", "🍜", "짜장면 값은 얼마나 올랐나",
@@ -1166,6 +1220,11 @@ def build_marriage():
     new_now, new_old = dur_share(d_y, "10"), dur_share(d_old, "10")
     late_now, late_old = dur_share(d_y, "40"), dur_share(d_old, "40")
     per100 = div[y] / wed[y] * 100
+
+    vs("marriage", "💍 결혼", "평균 초혼 나이가 더 많은 쪽은?",
+       (f"{y}년 여자", bride[y], f"{bride[y]:.1f}세"), (f"{g0}년 남자", groom[g0], f"{groom[g0]:.1f}세"))
+    vs("marriage", "💍 이혼", "이혼이 더 많았던 해는?",
+       (f"{d_old}년", div[d_old], f"{div[d_old]:,.0f}건"), (f"{y}년", div[y], f"{div[y]:,.0f}건"))
 
     topic(
         "marriage", "💍", "결혼과 이혼",
@@ -1245,6 +1304,16 @@ def build_daily():
     change = {k: avg("S0", c)[y] - avg("S0", c)[y0] for k, c in acts.items()}
     media = avg("S0", "S82")
 
+    vs("daily", "🕐 하루", f"{y}년 하루에 더 오래 하는 것은?",
+       ("미디어로 쉬는 시간", media[y], f"{media[y]}분"),
+       ("여자의 집안일 시간", w[y], f"{w[y]}분"))
+    vs("daily", "🕐 하루", f"{y}년 하루에 더 오래 걸리는 것은?",
+       ("평일 출근길 (편도)", commute[y], f"{commute[y]}분"),
+       ("남자의 집안일 시간", m[y], f"{m[y]}분"))
+    vs("daily", "🕐 하루", f"{y0}→{y}년, 하루에 더 많이 늘어난 시간은?",
+       ("수면", change["수면"], f"{change['수면']:+d}분"),
+       ("문화·여가", change["문화·여가"], f"{change['문화·여가']:+d}분"))
+
     topic(
         "daily", "🕐", "한국인의 하루는 어떻게 흘러가나",
         f"출근·잠·집안일·여가, {y0}년부터 {y}년까지의 하루",
@@ -1264,7 +1333,7 @@ def build_daily():
                    "체감보다 길게 나옵니다."),
             slider("dl3", f"{y}년 여자는 남자보다 집안일(가정관리)에 하루 몇 분을 더 쓸까요?",
                    gap, "분", 0, 200, 5,
-                   f"{y}년 여자 {w[y]}분 · 남자 {m[y]}분 "
+                   f"{y}년 여자 {w[y]}분 · 남자 {m[y]}분 = 차이 {gap}분 "
                    f"({y0}년 여자 {w[y0]}분 · 남자 {m[y0]}분, 차이 {gap0}분)",
                    ("차이는 줄고 있지만 여전히 큽니다." if gap < gap0 else
                     "차이는 줄지 않았습니다.") + " 10세 이상 모두의 평균이라 집안일을 "
@@ -1296,7 +1365,8 @@ h_y = max(int(r["year"]) for r in hp if r["code"] == "KOR")
 H = owid_countries(hp, h_y, "cantril_ladder_score")
 h_rank = sorted(H, key=H.get, reverse=True)
 kor_h = H["South Korea"]
-kor_hr = h_rank.index("South Korea") + 1
+kor_hr = rank_of(H, "South Korea")
+wh = h_y + 1          # OWID 의 해는 3년 조사의 마지막 해, 보고서는 다음 해에 나온다
 gd = [r for r in load_csv("gdp_pcap_ppp.csv") if r["ny_gdp_pcap_pp_kd"]]
 gd_y = max(int(r["year"]) for r in gd if r["code"] == "KOR" and int(r["year"]) <= h_y)
 GD = owid_countries(gd, gd_y, "ny_gdp_pcap_pp_kd")
@@ -1325,36 +1395,41 @@ h_top4 = h_rank[:4]
 for c in h_top4 + asia4 + rich_rank[:3]:
     assert c in HAPPY_KO, f"{c}: HAPPY_KO 에 한국어 이름을 넣으세요"
 
+for a, b in (("South Korea", "Japan"), ("Taiwan", "United States"),
+             ("Costa Rica", "Sweden"), ("Singapore", "Ireland")):
+    vs("happiness", "😊 행복", "삶 만족도가 더 높은 나라는?",
+       *[(hko(c), H[c], f"{H[c]:.2f}점 ({rank_of(H, c)}위)") for c in (a, b)])
+
 topic(
     "happiness", "😊", "한국인은 행복할까",
     "나라별 삶 만족도와 소득",
     "World Happiness Report (Our World in Data)",
     "https://ourworldindata.org/grapher/happiness-cantril-ladder",
     [
-        slider("hp1", f"{h_y}년 한국인의 삶 만족도는 0~10점 중 몇 점일까요?",
+        slider("hp1", f"세계행복보고서 {wh}에서 한국인의 삶 만족도는 0~10점 중 몇 점일까요?",
                kor_h, "점", 0, 10, 1,
-               f"{h_y}년 한국 {kor_h:.2f}점 · 1위 {hko(h_rank[0])} {H[h_rank[0]]:.2f}점 · "
+               f"세계행복보고서 {wh}({h_y - 2}~{h_y}년 조사) 한국 {kor_h:.2f}점 · 1위 {hko(h_rank[0])} {H[h_rank[0]]:.2f}점 · "
                f"꼴찌 {hko(h_rank[-1])} {H[h_rank[-1]]:.2f}점",
                "이 점수는 '가장 좋은 삶을 10점이라 할 때 지금 몇 점인가'에 스스로 답한 "
                "값입니다. 행복을 재는 방법에 따라 숫자가 달라집니다."),
         slider("hp2", f"한국의 삶 만족도는 {len(H)}개국 중 몇 위일까요?",
                kor_hr, "위", 1, len(H), 1,
-               f"{h_y}년 {len(H)}개국 중 {kor_hr}위",
+               f"세계행복보고서 {wh} {len(H)}개국 중 {kor_hr}위 (같은 점수는 같은 순위)",
                "경제 순위만큼 높을 거라고 짐작하기 쉽습니다."),
         choice("hp3", "삶 만족도가 가장 높은 나라는?",
                sorted(hko(c) for c in h_top4), hko(h_rank[0]),
-               f"{h_y}년 " + " · ".join(f"{i + 1}위 {hko(c)} {H[c]:.2f}"
+               f"세계행복보고서 {wh} " + " · ".join(f"{rank_of(H, c)}위 {hko(c)} {H[c]:.2f}"
                                         for i, c in enumerate(h_rank[:5])),
                "부유한 나라 순서와 행복한 나라 순서는 같지 않습니다."),
         choice("hp4", "한국·일본·미국·대만 중 삶 만족도가 가장 높은 나라는?",
                [hko(c) for c in asia4], hko(max(asia4, key=H.get)),
-               " · ".join(f"{hko(c)} {H[c]:.2f}점 ({h_rank.index(c) + 1}위)" for c in asia4),
+               " · ".join(f"{hko(c)} {H[c]:.2f}점 ({rank_of(H, c)}위)" for c in asia4),
                "이웃 나라끼리도 차이가 큽니다. 소득이 비슷해도 만족도는 다릅니다."),
         slider("hp5", f"1인당 소득이 가장 높은 나라({hko(richest)})는 삶 만족도 "
                       f"{len(H)}개국 중 몇 위일까요?",
-               h_rank.index(richest) + 1, "위", 1, len(H), 1,
+               rank_of(H, richest), "위", 1, len(H), 1,
                f"{gd_y}년 1인당 GDP(구매력 기준) 1~3위 "
-               + " · ".join(f"{hko(c)} {GD[c]:,.0f}달러(만족도 {h_rank.index(c) + 1}위)"
+               + " · ".join(f"{hko(c)} {GD[c]:,.0f}달러(만족도 {rank_of(H, c)}위)"
                             for c in rich_rank[:3]),
                "돈은 행복을 늘리지만, 가장 부유한 나라가 가장 행복한 나라는 아닙니다."
                if h_rank[0] != richest else "이번에는 가장 부유한 나라가 가장 행복한 "
@@ -1386,6 +1461,11 @@ ALC_KO = {"Romania": "루마니아", "Georgia": "조지아", "Latvia": "라트�
 for c in al_opts + al4 + al_rank[:3]:
     assert c in ALC_KO, f"{c}: ALC_KO 에 한국어 이름을 넣으세요"
 
+for a, b in (("South Korea", "United States"), ("Russia", "Ireland"),
+             ("Japan", "China"), ("Germany", "France")):
+    vs("alcohol", "🍺 술", f"{al_y}년 1인당 술을 더 많이 마시는 나라는?",
+       *[(ALC_KO[c], AL[c], f"{AL[c]:.1f}L") for c in (a, b)])
+
 topic(
     "alcohol", "🍺", "누가 제일 많이 마시나",
     "나라별 1인당 알코올 소비량",
@@ -1400,21 +1480,21 @@ topic(
                f"(360mL·16도)에는 {360 * 0.16:.0f}mL가 들어 있어, {kor_al:.1f}L는 소주 약 "
                f"{kor_al * 1000 / (360 * 0.16):.0f}병입니다."),
         slider("al2", f"한국은 {len(AL)}개국 중 술을 몇 번째로 많이 마실까요?",
-               al_rank.index("South Korea") + 1, "위", 1, len(AL), 1,
-               f"{al_y}년 {len(AL)}개국 중 {al_rank.index('South Korea') + 1}위",
+               rank_of(AL, "South Korea"), "위", 1, len(AL), 1,
+               f"{al_y}년 {len(AL)}개국 중 {rank_of(AL, 'South Korea')}위",
                "'한국은 술을 많이 마신다'는 인상과 실제 순위는 다를 수 있습니다. "
                "회식 문화가 눈에 띄는 것과 총량은 다른 이야기입니다."),
         choice("al3", "1인당 알코올 소비량이 가장 많은 나라는?",
                sorted(ALC_KO[c] for c in al_opts), ALC_KO[al_rank[0]],
                f"{al_y}년 " + " · ".join(f"{i + 1}위 {ALC_KO.get(c, c)} {AL[c]:.1f}L"
                                         for i, c in enumerate(al_rank[:3]))
-               + " … " + " · ".join(f"{ALC_KO[c]} {al_rank.index(c) + 1}위"
+               + " … " + " · ".join(f"{ALC_KO[c]} {rank_of(AL, c)}위"
                                     for c in al_opts if c not in al_rank[:3]),
                "'술 하면 떠오르는 나라'와 실제 1위는 다릅니다. 상위권은 대개 "
                "동유럽 나라들입니다."),
         choice("al4", "한국·일본·중국·미국 중 1인당 알코올 소비량이 가장 많은 나라는?",
                [ALC_KO[c] for c in al4], ALC_KO[max(al4, key=AL.get)],
-               " · ".join(f"{ALC_KO[c]} {AL[c]:.1f}L ({al_rank.index(c) + 1}위)" for c in al4),
+               " · ".join(f"{ALC_KO[c]} {AL[c]:.1f}L ({rank_of(AL, c)}위)" for c in al4),
                "독한 술을 마시는 나라가 더 많이 마실 것 같지만, 순수 알코올로 바꾸면 "
                "순서가 달라집니다."),
         slider("al5", f"{al_y}년 한국의 1인당 알코올 소비량은 {al_y0}년보다 몇 % 줄었을까요?",
@@ -1528,6 +1608,16 @@ kor_at_rank, kor_at_gold = AT["South Korea"]
 assert kor_at_gold == sum_gold, (f"두 문서의 한국 하계 금메달 수가 다릅니다: "
                                  f"종목별 {sum_gold} · 역대표 {kor_at_gold}")
 
+_judo_tkd = SUM_SPORT["Taekwondo"] + SUM_SPORT["Judo"]
+vs("olympics", "🏅 올림픽", "한국 하계올림픽 금메달, 더 많은 쪽은?",
+   ("양궁", SUM_SPORT["Archery"], f"{SUM_SPORT['Archery']}개"),
+   ("태권도 + 유도", _judo_tkd, f"{_judo_tkd}개"))
+vs("olympics", "🏅 올림픽", "한국 올림픽 금메달, 더 많은 쪽은?",
+   ("동계 쇼트트랙", WIN_SPORT[st], f"{WIN_SPORT[st]}개"),
+   ("하계 태권도", SUM_SPORT["Taekwondo"], f"{SUM_SPORT['Taekwondo']}개"))
+vs("olympics", "🏅 올림픽", "역대 하계올림픽 금메달이 더 많은 나라는?",
+   ("한국", kor_at_gold, f"{kor_at_gold}개"), ("일본", AT["Japan"][1], f"{AT['Japan'][1]}개"))
+
 topic(
     "olympics", "🏅", "올림픽 메달",
     "한국은 무엇으로, 얼마나 땄나",
@@ -1546,7 +1636,7 @@ topic(
                "메달 소식은 대회마다 크게 남지만, 모두 합친 수는 감으로 잡기 어렵습니다."),
         slider("ol3", "한국의 동계올림픽 금메달 중 쇼트트랙이 차지하는 비율은?",
                st_share, "%", 0, 100, 1,
-               f"동계 금메달 {win_gold}개 중 쇼트트랙 {WIN_SPORT[st]}개",
+               f"동계 금메달 {win_gold}개 중 쇼트트랙 {WIN_SPORT[st]}개 = {st_share:.0f}%",
                "'동계는 쇼트트랙'이라는 말은 맞지만, 얼마나 쏠려 있는지는 세어 봐야 "
                "압니다."),
         slider("ol4", "한국의 하계올림픽 역대 최고 순위는 몇 위일까요?",
@@ -1591,6 +1681,13 @@ def build_lotto():
     lt_avg = mean(r["rnk1WnAmt"] for r in won1) / 1e8                     # 억 원
     lt_most = max(LT, key=lambda r: r["rnk1WnNope"])
     lt_carry = sum(1 for r in LT if r["rnk1WnNope"] == 0)
+    lt_crowd = sum(1 for r in LT if r["rnk1WnNope"] >= 20)
+
+    vs("lotto", "🎰 로또", f"{lt_n:,}회 동안 더 많이 나온 번호는?",
+       ("1번", balls[1], f"{balls[1]}회"), ("45번", balls[45], f"{balls[45]}회"))
+    vs("lotto", "🎰 로또", f"{lt_n:,}회 중 더 많았던 회차는?",
+       ("1등이 한 명도 없던 회차", lt_carry, f"{lt_carry}회"),
+       ("1등이 20명 넘게 나온 회차", lt_crowd, f"{lt_crowd}회"))
 
     topic(
         "lotto", "🎰", "로또, 정말 랜덤일까",
@@ -1599,7 +1696,7 @@ def build_lotto():
         "https://www.dhlottery.co.kr/lt645/result",
         [
             choice("lt1", f"{lt_n:,}회 동안 가장 많이 나온 번호는?",
-                   [str(x) for x in lt_opts], [str(x) for x in lt_top],
+                   [f"{x}번" for x in lt_opts], [f"{x}번" for x in lt_top],
                    " · ".join(f"{x}번 {balls[x]}회" for x in lt_opts)
                    + f" (번호 하나 평균 {lt_expect:.0f}회)",
                    "'7'처럼 행운의 번호가 더 자주 나올 것 같지만, 추첨기는 번호의 뜻을 "
@@ -1623,7 +1720,8 @@ def build_lotto():
                    "1등 확률은 낮지만 사는 사람이 많아 대부분의 회차에서 누군가는 당첨됩니다."),
             slider("lt5", "가장 많이 나온 번호는 가장 적게 나온 번호보다 몇 번 더 나왔을까요?",
                    balls[lt_top[0]] - lt_min, "번", 0, 150, 1,
-                   f"가장 많이 {balls[lt_top[0]]}회 ({', '.join(f'{x}번' for x in lt_top)}) · "
+                   f"차이 {balls[lt_top[0]] - lt_min}회: 가장 많이 {balls[lt_top[0]]}회 "
+                   f"({', '.join(f'{x}번' for x in lt_top)}) · "
                    f"가장 적게 {lt_min}회 "
                    f"({', '.join(f'{x}번' for x, c in sorted(balls.items()) if c == lt_min)})",
                    f"완전히 무작위여도 번호마다 평균 {lt_expect:.0f}회에서 ±{lt_sd:.0f}회쯤 "
@@ -1675,6 +1773,16 @@ def build_subway():
     am_on = per_day([7, 8], ("ON",))
     # 가장 붐비는 역 보기: 상위 3곳 + '강남'(흔히 1위로 짐작하는 역)
     busy_opts = top(busy, 3) + (["강남"] if "강남" not in top(busy, 3) else top(busy)[3:])
+
+    tag = "🚇 지하철"
+    vs("subway", tag, "하루 승하차가 더 많은 역은?",
+       *[(s, busy[s], ppl(busy[s])) for s in ("홍대입구", "강남")])
+    vs("subway", tag, "출근 시간(7~9시)에 내리는 사람이 더 많은 역은?",
+       *[(s, am_off[s], f"{am_off[s]:,.0f}명") for s in ("여의도", "강남")])
+    vs("subway", tag, "출근 시간(7~9시)에 타는 사람이 더 많은 역은?",
+       *[(s, am_on[s], f"{am_on[s]:,.0f}명") for s in ("신림", "잠실")])
+    vs("subway", tag, "지하철 승차가 더 많은 시간대는?",
+       *[(f"{h}~{h + 1}시", by_hour[h], ppl(by_hour[h])) for h in (8, 18)])
 
     def hr(h):
         return f"{h}~{h + 1}시"
@@ -1745,8 +1853,23 @@ def main() -> None:
         if t["id"] in SHOWN:
             index.append({k: t[k] for k in ("id", "emoji", "title", "blurb",
                                             "source")})
-    missing = SHOWN - {t["id"] for t in TOPICS}
+    missing = set(SHOWN) - {t["id"] for t in TOPICS}
     assert not missing, f"SHOWN 에 없는 주제가 있습니다: {missing}"
+    index.sort(key=lambda t: SHOWN.index(t["id"]))       # 계산한 순서가 아니라 SHOWN 순서로
+
+    # 홈 화면의 두 놀이: 내 월급 계산기 · 더 많을까 적을까. 보이는 주제의 문제만 싣는다.
+    # 원본이 없어 지난번 값을 쓴 주제는 '더 많을까' 문제도 지난번 것을 그대로 가져온다
+    EXTRA = APP / "extras"
+    EXTRA.mkdir(exist_ok=True)
+    pairs = [p for p in VERSUS if p["tid"] in SHOWN]
+    if KEPT and (EXTRA / "versus.json").exists():
+        pairs += [p for p in json.load(io.open(EXTRA / "versus.json", encoding="utf-8"))
+                  if p["tid"] in KEPT and p["tid"] in SHOWN]
+    pairs.sort(key=lambda p: SHOWN.index(p["tid"]))
+    io.open(EXTRA / "versus.json", "w", encoding="utf-8").write(
+        json.dumps(pairs, ensure_ascii=False, indent=1))
+    io.open(EXTRA / "salary.json", "w", encoding="utf-8").write(
+        json.dumps(CALC, ensure_ascii=False))
 
     # 제목·부제는 화면을 바꾸며 고친 값을 지킨다 (2장에서 내 제목으로 바꾼다).
     # 다시 계산해도 내 제목이 «감 테스트»로 돌아가지 않게, 있던 값을 읽어 쓴다
@@ -1767,12 +1890,30 @@ def main() -> None:
             {"min": 30, "name": "느낌대로 삽니다", "emoji": "🎲"},
             {"min": 0, "name": "감은 접어두시죠", "emoji": "🙈"},
         ],
-        "reactions_choice": {"hit": "맞히셨습니다", "miss": "다들 그렇게 찍습니다"},
+        # 문구는 여러 개 중 하나를 무작위로 고른다. 슬라이더는 오차가 클수록 아래 칸으로,
+        # 높게(high)·낮게(low) 빗나갔는지에 따라 다른 문구 — 놀리되 상처 주지 않게
+        "reactions_choice": {
+            "hit": ["맞히셨습니다", "촉이 살아 있네요", "데이터랑 통했습니다",
+                    "정답! 혹시 통계청 다니세요?", "이건 감이 아니라 실력입니다"],
+            "miss": ["다들 그렇게 찍습니다", "직감이 잠깐 출장 중이네요", "상식이 배신한 순간",
+                     "괜찮아요, 그래서 퀴즈입니다", "그럴 줄 알고 낸 문제입니다",
+                     "아깝… 다음 문제는 맞힐 겁니다"],
+        },
         "reactions": [
-            {"max": 5, "text": "촉이 좋으시네요"},
-            {"max": 20, "text": "비슷하게 보셨습니다"},
-            {"max": 60, "text": "음…"},
-            {"max": 999, "text": "꽤 멀리 가셨습니다"},
+            {"max": 5, "any": ["소름… 거의 정확합니다", "촉이 좋으시네요",
+                               "숫자 감각 인정합니다", "혹시 답을 미리 보셨나요?"]},
+            {"max": 20, "high": ["살짝 높게 보셨어요", "조금 후하게 잡으셨네요",
+                                 "아깝게 위로 빗나갔어요"],
+                        "low": ["살짝 낮게 보셨어요", "조금 짜게 잡으셨네요",
+                                "아깝게 아래로 빗나갔어요"]},
+            {"max": 60, "high": ["생각보다 꽤 적습니다", "부풀려진 인상에 속으셨네요",
+                                 "실제는 그보다 한참 아래"],
+                        "low": ["생각보다 꽤 많습니다", "실제는 그보다 한참 위",
+                                "현실이 상상을 넘었네요"]},
+            {"max": 999, "high": ["상상력이 풍부하시네요", "꽤 멀리, 위로 가셨습니다",
+                                  "숫자를 너무 크게 보셨어요"],
+                         "low": ["현실은 훨씬 컸습니다", "꽤 멀리, 아래로 가셨습니다",
+                                 "이건 다들 놀라는 숫자입니다"]},
         ],
         "topics": index,
     }, ensure_ascii=False, indent=2))

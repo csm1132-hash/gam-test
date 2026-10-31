@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>당신의 직감과 상식은 얼마나 맞는가? — 출퇴근길, 당신의 직감은 몇 점?</title>
-<meta name="description" content="공개 데이터로 만든 추측 게임. 미스 유니버스와 돈, 주제당 5문항.">
+<meta name="description" content="공개 데이터로 만든 추측 게임. 10개 주제, 주제당 5문항. 내 월급 계산기와 더 많을까 적을까.">
 <!-- 제목은 주아, 본문은 Pretendard. 못 받아 와도 기본 글꼴로 돈다 -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
@@ -22,6 +22,17 @@
       <div class="badge-day">공개 데이터</div>
       <h1 id="title">출근길 감 테스트</h1>
       <p id="subtitle" class="muted"></p>
+    </div>
+    <!-- 주제와 따로 노는 두 놀이 -->
+    <div class="play-cards">
+      <button id="go-salary" class="play-card">
+        <span class="play-emoji">💸</span>
+        <span><b>내 월급, 세계에선 상위 몇 %?</b><small>월급을 넣으면 바로 계산</small></span>
+      </button>
+      <button id="go-versus" class="play-card">
+        <span class="play-emoji">🆚</span>
+        <span><b>더 많을까 적을까?</b><small>둘 중 큰 쪽 고르기 10판</small></span>
+      </button>
     </div>
     <p id="progress-note" class="fineprint" style="text-align:left"></p>
     <div id="topic-grid" class="grid"></div>
@@ -68,6 +79,67 @@
     <div class="actions">
       <button id="btn-share" class="primary">친구에게 보내기</button>
       <button id="btn-more" class="ghost">다른 주제 풀기</button>
+    </div>
+  </section>
+
+  <!-- 내 월급 계산기 ──────────────────────────────── -->
+  <section id="view-salary" class="view" hidden>
+    <button class="linkish back-home">← 처음으로</button>
+    <h2>💸 내 월급, 세계에선 상위 몇 %?</h2>
+    <p class="muted small">세금 떼고 손에 쥐는 한 달 돈을 넣어 보세요.
+      입력한 숫자는 이 폰 안에서만 계산하고 어디로도 보내지 않습니다.</p>
+    <label class="won-input">
+      <input id="salary-in" type="number" inputmode="numeric" min="1" step="10"
+             aria-label="한 달 소득 (만 원)">
+      <span>만 원</span>
+    </label>
+    <button id="btn-salary" class="primary">계산하기</button>
+
+    <div id="salary-out" class="score-card salary-card" hidden>
+      <div id="salary-emoji" class="grade-emoji"></div>
+      <div class="muted small">전 세계 사람 중</div>
+      <div id="salary-top" class="score"></div>
+      <div id="salary-line" class="grade"></div>
+      <p id="salary-detail" class="why"></p>
+    </div>
+    <div id="salary-actions" class="actions" hidden>
+      <button id="btn-salary-share" class="primary">결과 보내기 (금액은 빼고)</button>
+    </div>
+    <p id="salary-note" class="fineprint"></p>
+  </section>
+
+  <!-- 더 많을까 적을까 ─────────────────────────────── -->
+  <section id="view-versus" class="view" hidden>
+    <button class="linkish back-home">← 처음으로</button>
+
+    <div id="vs-play">
+      <div class="vs-top">
+        <span id="vs-count" class="muted small"></span>
+        <span id="vs-streak" class="streak"></span>
+      </div>
+      <div class="progress"><div id="vs-bar"></div></div>
+      <p id="vs-tag" class="muted small vs-tag"></p>
+      <h2 id="vs-q"></h2>
+      <div class="vs-pair">
+        <button id="vs-a" class="vs-btn"></button>
+        <div class="vs-mark">VS</div>
+        <button id="vs-b" class="vs-btn"></button>
+      </div>
+      <p id="vs-react" class="vs-react" hidden></p>
+      <button id="vs-next" class="primary" hidden>다음</button>
+    </div>
+
+    <div id="vs-end" hidden>
+      <div class="score-card">
+        <div id="vs-emoji" class="grade-emoji"></div>
+        <div id="vs-score" class="score"></div>
+        <div id="vs-grade" class="grade"></div>
+        <p id="vs-best" class="muted small"></p>
+      </div>
+      <div class="actions">
+        <button id="vs-again" class="primary">한 판 더</button>
+        <button id="vs-share" class="ghost">친구에게 보내기</button>
+      </div>
     </div>
   </section>
 

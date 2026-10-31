@@ -20,6 +20,7 @@ import sys
 import datetime as dt
 from collections import Counter
 from html.parser import HTMLParser
+from math import exp, log
 from pathlib import Path
 from statistics import mean
 
@@ -35,6 +36,11 @@ RAW = APP / "data" / "raw"
 OUT = APP / "topics"
 
 TOPICS: list[dict] = []
+
+# 화면의 주제 목록에 내보낼 주제. 나머지도 계산은 그대로 하고 topics/*.json 도 남지만
+# 목록(topics.json)에서 빠져 보이지 않는다. 다시 보이게 하려면 여기에 id 를 더한다
+SHOWN = {"miss-universe", "money", "prices", "marriage", "daily", "happiness",
+         "alcohol", "olympics", "lotto", "subway"}
 
 
 def load_json(name):
@@ -74,21 +80,33 @@ def topic(tid, emoji, title, blurb, source, source_url, questions, caveat=""):
                    "caveat": caveat, "questions": questions})
 
 
-def slider(qid, text, answer, unit, lo, hi, step, basis, why):
-    return {"id": qid, "type": "slider", "text": text, "unit": unit,
-            "min": lo, "max": hi, "step": step,
-            "answer": round(float(answer), 1), "basis": basis, "why": why}
+def slider(qid, text, answer, unit, lo, hi, step, basis, why, hint=None):
+    """눈금(step)이 정수면 정답도 정수로 맞춘다 — 화면의 정답이 고르는 값과 같은 꼴이 되게.
+
+    hint 는 문항 바로 아래 작게 보이는 실마리. 없으면 아무것도 나오지 않는다.
+    """
+    q = {"id": qid, "type": "slider", "text": text, "unit": unit,
+         "min": lo, "max": hi, "step": step,
+         "answer": round(float(answer)) if float(step).is_integer()
+         else round(float(answer), 1),
+         "basis": basis, "why": why}
+    if hint:
+        q["hint"] = hint
+    return q
 
 
-def choice(qid, text, options, answer, basis, why):
+def choice(qid, text, options, answer, basis, why, hint=None):
     """answer 를 목록으로 주면 공동 정답이다 (공동 1위처럼 하나로 고를 수 없을 때).
     하나뿐이면 문자열로 펴서, 정답이 하나인 문항의 모양은 그대로 둔다."""
     if isinstance(answer, list) and len(answer) == 1:
         answer = answer[0]
     for a in answer if isinstance(answer, list) else [answer]:
         assert a in options, f"{qid}: 정답이 선택지에 없습니다"
-    return {"id": qid, "type": "choice", "text": text, "options": options,
-            "answer": answer, "basis": basis, "why": why}
+    q = {"id": qid, "type": "choice", "text": text, "options": options,
+         "answer": answer, "basis": basis, "why": why}
+    if hint:
+        q["hint"] = hint
+    return q
 
 
 # ════════════════════════════════════════════════════════════════
@@ -866,6 +884,845 @@ topic(
            f"{nav_old}곳과 나라가 아닌 'Latina'를 뺀 값이라, 한 명만 세거나 아메리카를 "
            "하나로 묶거나 목록을 모두 센 자료와는 숫자가 다릅니다.")
 
+# ── 12. 돈 ───────────────────────────────────────────────────────
+# PIP 는 '하루 X달러(2021년 PPP) 아래에 사는 사람의 비율'을 준다. 소득선 62개에서
+# 받은 비율을 이으면 세계 소득 분포 곡선이 되고, 그 곡선 위에서
+# '300만 원은 아래에서 몇 %' 와 '50% 가 되는 소득선 = 중위값' 을 함께 읽는다.
+PIP = [r for r in load_json("pip_world.json") if r["estimate_type"] == "actual"]
+pip_y = max(r["reporting_year"] for r in PIP)
+CURVE = sorted((r["poverty_line"], r["headcount"] * 100) for r in PIP
+               if r["reporting_year"] == pip_y)
+
+
+def _pairs():
+    """곡선의 이웃한 두 점. 소득선은 12%씩 벌어지므로 로그 눈금 위에서 잇는다."""
+    for (x0, y0), (x1, y1) in zip(CURVE, CURVE[1:]):
+        yield log(x0), y0, log(x1), y1
+
+
+def below_pct(usd_day):
+    """하루 usd_day 달러보다 적게 버는 사람의 비율(%)."""
+    for lx0, y0, lx1, y1 in _pairs():
+        if lx0 <= log(usd_day) <= lx1:
+            return y0 + (log(usd_day) - lx0) / (lx1 - lx0) * (y1 - y0)
+    raise ValueError(f"하루 {usd_day:.2f}달러가 받은 곡선 범위 밖입니다 — 소득선을 넓히세요")
+
+
+def line_at(pct):
+    """사람의 pct% 가 그보다 적게 버는 소득선(하루 달러)."""
+    for lx0, y0, lx1, y1 in _pairs():
+        if y0 <= pct <= y1:
+            return exp(lx0 + (pct - y0) / (y1 - y0) * (lx1 - lx0))
+    raise ValueError(f"{pct}% 가 받은 곡선 범위 밖입니다")
+
+
+_mk = load_json("wb_money_kor.json")[1]
+
+
+def kor_series(ind):
+    return {int(r["date"]): r["value"] for r in _mk
+            if r["indicator"]["id"] == ind and r["value"] is not None}
+
+
+ppp = kor_series("PA.NUS.PRVT.PP")      # 2021년 소비 PPP — PIP 의 달러와 같은 기준
+cpi = kor_series("FP.CPI.TOTL")
+
+# 원 ↔ PIP 달러. 그 해 원화를 2021년 물가로 되돌린 뒤 2021년 PPP 로 나눈다
+def won_to_pip(won, year):
+    return won * cpi[2021] / cpi[year] / ppp[2021]
+
+
+def pip_to_won(usd, year):
+    return usd * ppp[2021] * cpi[year] / cpi[2021]
+
+
+SALARY = 3_000_000
+sal_day = won_to_pip(SALARY * 12 / 365, pip_y)
+sal_pct = below_pct(sal_day)
+med_day = line_at(50)
+med_month = pip_to_won(med_day * 365 / 12, pip_y) / 10_000          # 만 원
+
+
+# 자영업자 소득은 KOSIS(인증키 필요)에서만 받을 수 있다. 키가 없어 원본이 없으면
+# 지난번에 계산해 둔 문항을 그대로 쓴다 — 키 없는 사람도 나머지는 다시 계산할 수 있게
+if (RAW / "kosis_household_income.json").exists():
+    HH = load_json("kosis_household_income.json")
+    hh_y = max(int(r["PRD_DE"]) for r in HH)      # 조사 연도. 소득은 그 전해 것이다
+
+    def hh_month(status, item):
+        """가구주 종사상지위별 경상소득(연, 만 원) → 한 달."""
+        return next(float(r["DT"]) for r in HH if int(r["PRD_DE"]) == hh_y
+                    and r["C2_NM"] == status and r["ITM_ID"] == item) / 12
+
+    se_avg = hh_month("자영업자", "T01")
+    se_med = hh_month("자영업자", "T03")
+    wage_avg = hh_month("상용근로자", "T01")
+    q_selfemp = slider(
+        "n2", f"{hh_y - 1}년 한국 자영업자 가구의 한 달 평균 소득은? (가구원 소득 모두 포함)",
+        se_avg, "만 원", 100, 1500, 10,
+        f"{hh_y}년 가계금융복지조사: 가구주가 자영업자인 가구의 {hh_y - 1}년 경상소득 "
+        f"평균 연 {se_avg * 12:,.0f}만 원 ÷ 12 = {se_avg:,.0f}만 원 "
+        f"(중앙값 {se_med:,.0f}만 원 · 상용근로자 가구 평균 {wage_avg:,.0f}만 원)",
+        "'자영업은 힘들다'는 말만 들으면 낮게 짐작하기 쉽습니다. 다만 가구원 모두의 "
+        "소득을 합친 값이고, 잘 버는 일부가 평균을 끌어올려 중앙값은 그보다 낮습니다.")
+else:
+    print("  ※ KOSIS 원본이 없어 '돈' 2번 문항은 지난번 계산값을 그대로 씁니다")
+    q_selfemp = next(q for q in json.load(io.open(OUT / "money.json", encoding="utf-8"))
+                     ["questions"] if q["id"] == "n2")
+
+# 인구 5천만 이상 나라의 1인당 국민소득 (Atlas). 한국이 들어 있는 해를 쓴다
+_gni = load_json("wb_gni.json")[1]
+_pop = load_json("wb_pop_all.json")[1]
+big_y = max(int(r["date"]) for r in _gni
+            if r["countryiso3code"] == "KOR" and r["value"] is not None)
+_p = {r["countryiso3code"]: r["value"] for r in _pop
+      if int(r["date"]) == big_y and r["countryiso3code"] in REAL and r["value"]}
+BIG = {r["countryiso3code"]: r["value"] for r in _gni
+       if int(r["date"]) == big_y and r["countryiso3code"] in REAL and r["value"]
+       and _p.get(r["countryiso3code"], 0) >= 50_000_000}
+big_rank = sorted(BIG, key=BIG.get, reverse=True)
+BIG_KO = {"USA": "미국", "DEU": "독일", "GBR": "영국", "FRA": "프랑스", "JPN": "일본",
+          "KOR": "한국", "ITA": "이탈리아", "RUS": "러시아", "CHN": "중국", "TUR": "튀르키예",
+          "MEX": "멕시코", "BRA": "브라질", "THA": "태국", "ZAF": "남아프리카공화국",
+          "IRN": "이란", "COL": "콜롬비아", "COD": "콩고민주공화국", "SDN": "수단",
+          "ETH": "에티오피아", "UGA": "우간다", "TZA": "탄자니아", "MMR": "미얀마",
+          "NGA": "나이지리아"}
+# 상위 3개국에 일본을 더한다(이미 들어 있으면 4위까지). 순서로 정답이 드러나지 않게 가나다순
+big_opts = big_rank[:3] + (["JPN"] if "JPN" not in big_rank[:3] else big_rank[3:4])
+big_hi, big_lo = big_rank[0], big_rank[-1]
+for c in big_opts + [big_lo]:
+    assert c in BIG_KO, f"{c}: BIG_KO 에 한국어 이름을 넣으세요"
+big_ratio = BIG[big_hi] / BIG[big_lo]
+big_top5 = " · ".join(f"{BIG_KO.get(c, c)} {BIG[c]:,.0f}달러" for c in big_rank[:5])
+jpn_big = big_rank.index("JPN") + 1
+kor_big = big_rank.index("KOR") + 1
+
+topic(
+    "money", "💰", "돈, 다른 사람들은 얼마나 벌까",
+    "내 월급의 세계 순위부터 나라별 국민소득까지",
+    "World Bank (PIP · Open Data) · 통계청 가계금융복지조사", "https://pip.worldbank.org/",
+    [
+        slider("n1", "월급 300만 원. 전 세계 사람 중 상위 몇 %에 해당할까요? "
+                     "(나보다 많이 버는 사람의 비율)",
+               100 - sal_pct, "%", 0, 50, 1,
+               f"{pip_y}년 300만 원은 2021년 물가·구매력으로 하루 {sal_day:.1f}달러. "
+               f"PIP 세계 분포에서 이보다 많이 버는 사람은 {100 - sal_pct:.1f}%, "
+               f"적게 버는 사람은 {sal_pct:.1f}%",
+               "한국 안에서 보는 월급과 세계 속의 월급은 전혀 다른 자리에 있습니다. "
+               "비교 대상을 바꾸면 같은 돈의 순위가 바뀝니다."),
+        q_selfemp,
+        slider("n3", "인구 5천만 명이 넘는 나라 중 1인당 국민소득이 가장 높은 나라는 "
+                     "가장 낮은 나라의 몇 배일까요?",
+               big_ratio, "배", 5, 200, 1,
+               f"{big_y}년 1인당 GNI(Atlas) {BIG_KO[big_hi]} {BIG[big_hi]:,.0f}달러 ÷ "
+               f"{BIG_KO[big_lo]} {BIG[big_lo]:,.0f}달러 = {big_ratio:.1f}배 "
+               f"(인구 5천만 이상 {len(BIG)}개국 중)",
+               "'몇 배'는 감이 잘 안 와서 10배, 20배쯤으로 줄여 답하기 쉽습니다. "
+               "달러로 바꾼 값이라 물가 차이는 빠져 있어 체감 격차는 이보다 작습니다."),
+        slider("n4", f"{pip_y}년 전 세계 사람을 소득순으로 세우면, 한가운데 사람의 "
+                     "한 달 소득은 한국 물가로 얼마일까요?",
+               med_month, "만 원", 0, 300, 5,
+               f"세계 중위값 하루 {med_day:.2f}달러(2021년 PPP) → 한국 물가로 "
+               f"한 달 약 {med_month:,.0f}만 원",
+               "'평균'은 부자가 끌어올리지만 '한가운데'는 그렇지 않습니다. "
+               "세계의 한가운데는 생각보다 훨씬 아래에 있습니다."),
+        choice("n5", "인구 5천만 명이 넘는 나라 중 1인당 국민소득이 가장 높은 나라는?",
+               sorted(BIG_KO[c] for c in big_opts), BIG_KO[big_rank[0]],
+               f"{big_y}년 인구 5천만 이상 {len(BIG)}개국의 1인당 GNI(Atlas): "
+               f"{big_top5} … 일본 {jpn_big}위 · 한국 {kor_big}위",
+               "룩셈부르크·스위스 같은 작은 부자 나라를 빼면 순위가 달라집니다. "
+               "사람이 많으면서 부유한 나라는 드뭅니다."),
+    ],
+    caveat="PIP는 가구의 1인당 소득 또는 소비(나라마다 다름)를 2021년 물가·구매력(PPP)으로 "
+           "맞춘 값이라, 세전 월급과 바로 같지 않습니다. 300만 원은 혼자 쓰는 한 달 "
+           "소득으로 보고 한국 소비자물가와 PPP로 바꿨습니다. 자영업자 소득은 가구주가 "
+           "자영업자인 가구의 근로·사업·재산·이전 소득을 모두 합친 값이라, 자영업자 한 사람이 "
+           "버는 돈과 다릅니다. 나라별 1인당 국민소득은 달러로 바꾼 값이라 물가 차이가 빠져 "
+           "있습니다.")
+
+
+# ── 원본이 없을 수 있는 주제 공통 ────────────────────────────────
+# KOSIS 원본은 인증키가 있어야 받아지고, 로또는 비공식 경로라 언제든 막힐 수 있다.
+# 원본이 없으면 지난번에 계산해 둔 주제를 그대로 다시 싣는다 — 그래도 나머지 주제는
+# 다시 계산할 수 있게
+def topic_or_kept(tid, files, build):
+    if all((RAW / f).exists() for f in files):
+        build()
+        return
+    print(f"  ※ 원본({', '.join(files)})이 없어 '{tid}' 주제는 지난번 계산값을 그대로 씁니다")
+    TOPICS.append(json.load(io.open(OUT / f"{tid}.json", encoding="utf-8")))
+
+
+def kosis_series(name, **match):
+    """KOSIS 응답에서 조건(C2="K01119" 처럼)에 맞는 줄만 골라 {연도: 값}."""
+    return {int(r["PRD_DE"]): float(r["DT"]) for r in load_json(name)
+            if all(r.get(k) == v for k, v in match.items()) and r["DT"] not in ("-", "")}
+
+
+# ── 13. 물가 ─────────────────────────────────────────────────────
+# 물가지수는 같은 물건 값이 어떻게 변했는지를 2020년=100 으로 나타낸다. 두 해의 지수를
+# 나누면 그사이 값이 몇 배가 됐는지가 된다. 실제 가격(원)은 이 표에 없다
+CPI_CODE = {"총지수": "0", "짜장면": "K01119", "라면": "A01110", "커피(외식)": "K01133",
+            "시내버스 요금": "G03201", "택시 요금": "G03203", "TV": "I01101",
+            "소주": "B01101", "쌀": "A01101"}
+
+
+def build_prices():
+    P = {k: kosis_series("kosis_cpi.json", C2=c) for k, c in CPI_CODE.items()}
+    y1 = max(P["총지수"])
+    y0 = y1 - 30
+
+    def times(k):
+        return P[k][y1] / P[k][y0]
+
+    def up(k, years):                        # years 년 전보다 몇 % 올랐나
+        return (P[k][y1] / P[k][y1 - years] - 1) * 100
+
+    y10 = y1 - 10
+
+    def hint10(*ks):
+        return f"힌트: {y10}년보다 " + " · ".join(f"{k} {up(k, 10):+.0f}%" for k in ks)
+
+    four = ["짜장면", "라면", "커피(외식)", "시내버스 요금"]
+    top = max(four, key=times)
+    fall_opts = ["TV", "쌀", "소주", "택시 요금"]
+    fell = [k for k in fall_opts if times(k) < 1]
+    assert fell, "30년 전보다 값이 내린 보기가 하나도 없습니다 — 보기를 바꾸세요"
+    rice = (P["쌀"][y1] / P["쌀"][y1 - 1] - 1) * 100
+    total1 = (P["총지수"][y1] / P["총지수"][y1 - 1] - 1) * 100
+
+    topic(
+        "prices", "🍜", "짜장면 값은 얼마나 올랐나",
+        f"{y0}년부터 {y1}년까지, 30년 동안 오른 것과 내린 것",
+        "통계청 소비자물가조사 (KOSIS)",
+        "https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1J22001",
+        [
+            slider("pr1", f"{y1}년 짜장면 값은 {y0}년보다 몇 % 올랐을까요?",
+                   up("짜장면", 30), "%", 0, 1000, 10,
+                   f"짜장면 물가지수 {y0}년 {P['짜장면'][y0]:.1f} → {y1}년 "
+                   f"{P['짜장면'][y1]:.1f} (2020년=100) = {up('짜장면', 30):+.0f}% "
+                   f"({times('짜장면'):.1f}배)",
+                   "해마다 조금씩 오르면 체감은 덜하지만, 30년을 이어 붙이면 "
+                   "크게 달라집니다.",
+                   hint=hint10("짜장면")),
+            choice("pr2", "짜장면·라면·커피(외식)·시내버스 요금 중 30년 동안 값이 가장 "
+                          "많이 오른 것은?",
+                   four, top,
+                   f"{y0}→{y1}년 " + " · ".join(f"{k} {up(k, 30):+.0f}%" for k in four),
+                   "자주 사 먹는 것의 값은 기억에 남지만, 매일 내는 교통비는 오른 줄 "
+                   "모르고 지나가기 쉽습니다.",
+                   hint=hint10(*four)),
+            slider("pr3", "같은 30년 동안 물가 전체(소비자물가지수)는 몇 % 올랐을까요?",
+                   up("총지수", 30), "%", 0, 500, 5,
+                   f"총지수 {y0}년 {P['총지수'][y0]:.1f} → {y1}년 {P['총지수'][y1]:.1f} "
+                   f"= {up('총지수', 30):+.0f}% (짜장면 {up('짜장면', 30):+.0f}%)",
+                   "눈에 띄는 품목은 많이 오른 것처럼 느껴지지만, 전체 물가에는 덜 오르거나 "
+                   "내린 것도 섞여 있습니다.",
+                   hint=hint10("총지수").replace("총지수", "물가 전체")),
+            choice("pr4", "30년 전보다 오히려 값이 내린 것은?",
+                   fall_opts, fell,
+                   f"{y0}→{y1}년 " + " · ".join(f"{k} {times(k):.2f}배" for k in fall_opts),
+                   "같은 값에 화면이 커지고 성능이 좋아진 몫이 반영돼 있습니다. 물가지수는 "
+                   "품질이 좋아진 만큼을 값이 내린 것으로 셉니다."),
+            slider("pr5", f"{y1}년 쌀값은 1년 전보다 몇 % 올랐을까요?",
+                   rice, "%", -10, 30, 1,
+                   f"쌀 물가지수 {y1 - 1}년 → {y1}년 {rice:+.1f}% "
+                   f"(같은 해 물가 전체 {total1:+.1f}%)",
+                   "쌀값은 그해 작황에 따라 크게 출렁입니다. 한 해 값만 보고 추세를 "
+                   "말하기는 어렵습니다.",
+                   hint=hint10("쌀")),
+        ],
+        caveat="물가지수는 가격(원)이 아니라 같은 품목 값의 변화를 2020년=100으로 나타낸 "
+               "값입니다. 품질이 좋아진 만큼은 값이 내린 것으로 보정하므로, TV처럼 성능이 "
+               "빠르게 좋아지는 물건은 매장 가격과 다르게 움직입니다. 전국 기준입니다.")
+
+
+topic_or_kept("prices", ["kosis_cpi.json"], build_prices)
+
+
+# ── 14. 결혼과 이혼 ──────────────────────────────────────────────
+def build_marriage():
+    wed = kosis_series("kosis_vital.json", C2="20")
+    div = kosis_series("kosis_vital.json", C2="30")
+    crude = kosis_series("kosis_vital.json", C2="31")      # 조이혼율: 인구 1천 명당 이혼
+    groom = kosis_series("kosis_marriage_age.json", ITM_ID="T1")
+    bride = kosis_series("kosis_marriage_age.json", ITM_ID="T2")
+    y = max(wed)
+    peak_y = max(wed, key=wed.get)
+    div_peak = max(div, key=div.get)
+    decades = ["1990년대", "2000년대", "2010년대", "2020년대"]
+    div_dec = f"{div_peak // 10 * 10}년대"
+    assert div_dec in decades, f"이혼 정점 {div_peak}년이 보기에 없습니다"
+    g0 = min(groom)
+
+    # 동거기간별 이혼. '20년 이상'은 그 뒤를 모두 합친 칸이라 다른 칸과 크기를 겨루지 않고
+    # 전체에서 차지하는 비율로만 묻는다. 코드 10 = 1년 미만, 40 = 20년 이상
+    def dur_share(year, code):
+        d = kosis_series("kosis_divorce_duration.json", C2=code)
+        return d[year] / kosis_series("kosis_divorce_duration.json", C2="00")[year] * 100
+
+    d_y = max(kosis_series("kosis_divorce_duration.json", C2="00"))
+    d_old = d_y - 30
+    new_now, new_old = dur_share(d_y, "10"), dur_share(d_old, "10")
+    late_now, late_old = dur_share(d_y, "40"), dur_share(d_old, "40")
+    per100 = div[y] / wed[y] * 100
+
+    topic(
+        "marriage", "💍", "결혼과 이혼",
+        "언제 결혼하고, 얼마나 결혼하고, 언제 헤어지나",
+        "통계청 인구동향조사 (KOSIS)",
+        "https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1B8000G",
+        [
+            slider("mr1", f"{y}년 한국 남자의 평균 초혼 나이는?",
+                   groom[y], "세", 25, 40, 1,
+                   f"{y}년 남자 {groom[y]:.1f}세 · 여자 {bride[y]:.1f}세 "
+                   f"({g0}년 남자 {groom[g0]:.1f}세 · 여자 {bride[g0]:.1f}세)",
+                   f"주변 결혼식만 떠올리면 젊게 짐작하기 쉽습니다. {y - g0}년 사이 "
+                   f"{groom[y] - groom[g0]:.1f}살 늦어졌습니다."),
+            # '이혼율'은 흔히 그해 결혼 대비 이혼으로 말한다. 통계청 공식 지표(조이혼율)는
+            # 인구 1천 명당 이혼이라 정수로 고를 수 없어 근거에 함께 적는다
+            slider("mr2", f"{y}년 이혼율은? (그해 결혼 100건당 이혼 건수)",
+                   per100, "%", 0, 100, 1,
+                   f"{y}년 결혼 {wed[y]:,.0f}건 · 이혼 {div[y]:,.0f}건 → 100건당 "
+                   f"{per100:.1f}건. 통계청 공식 이혼율(조이혼율)은 인구 1천 명당 "
+                   f"{crude[y]:.1f}건",
+                   "'세 쌍 중 한 쌍이 이혼한다'는 말이 이 숫자에서 나옵니다. 하지만 그해 "
+                   "이혼한 부부는 대부분 다른 해에 결혼한 부부라, 결혼한 부부가 이혼할 "
+                   "확률과는 다릅니다."),
+            choice("mr3", f"{min(div)}년 이후 이혼 건수가 가장 많았던 때는?",
+                   decades, div_dec,
+                   f"가장 많았던 해 {div_peak}년 {div[div_peak]:,.0f}건 · "
+                   f"{y}년 {div[y]:,.0f}건",
+                   "'요즘 이혼이 많다'는 인상과 실제 정점은 다를 수 있습니다. 이혼은 "
+                   "결혼 건수를 따라 움직입니다."),
+            slider("mr4", "이혼 부부 중 1년 이내 이혼하는 비율은?",
+                   new_now, "%", 0, 30, 1,
+                   f"{d_y}년 이혼 {kosis_series('kosis_divorce_duration.json', C2='00')[d_y]:,.0f}건 "
+                   f"중 함께 산 지 1년 미만 {new_now:.1f}% ({d_old}년 {new_old:.1f}%)",
+                   "이혼이라면 신혼부부를 먼저 떠올리기 쉽습니다. 실제 비율은 함께 산 "
+                   "기간별로 세어 봐야 압니다."),
+            slider("mr5", f"{d_y}년 이혼한 부부 중 함께 산 지 20년이 넘은 부부의 비율은?",
+                   late_now, "%", 0, 60, 1,
+                   f"{d_y}년 {late_now:.1f}% ({d_old}년 {late_old:.1f}%)",
+                   "흔히 '황혼이혼'이라 부르는 경우입니다. 30년 사이 비율이 크게 "
+                   "달라졌습니다." if abs(late_now - late_old) >= 10 else
+                   "흔히 '황혼이혼'이라 부르는 경우입니다."),
+        ],
+        caveat="이혼은 신고한 해를 기준으로 셉니다. 동거기간은 결혼 신고일이 아니라 실제로 "
+               "함께 살기 시작한 때부터 잽니다. 초혼 나이는 그해 처음 결혼한 사람의 "
+               "평균입니다.")
+
+
+topic_or_kept("marriage", ["kosis_vital.json", "kosis_marriage_age.json",
+                         "kosis_divorce_duration.json"], build_marriage)
+
+
+# ── 15. 한국인의 하루 ────────────────────────────────────────────
+# 생활시간조사는 5년마다 10세 이상이 시간 일지를 쓴 것을 모은다. 값은 "8:04" 같은 시:분
+def build_daily():
+    def tu(kind, day, sex, act):
+        out = {}
+        for r in load_json(f"kosis_timeuse_{kind}.json"):
+            if (r["C1"], r["C2"], r["C4"]) == (day, sex, act) and ":" in r["DT"]:
+                h, m = r["DT"].split(":")
+                out[int(r["PRD_DE"])] = int(h) * 60 + int(m)
+        return out
+
+    def hm(m):
+        return f"{m // 60}시간 {m % 60}분"
+
+    def avg(sex, act):                     # 10세 이상 모두의 요일 평균
+        return tu("all", "A0", sex, act)
+
+    commute = tu("doer", "A1", "S0", "S921")
+    back = tu("doer", "A1", "S0", "S922")
+    y = max(commute)
+    sleep = avg("S0", "S11")
+    y0 = min(sleep)
+    w, m = avg("S2", "S4"), avg("S1", "S4")
+    gap, gap0 = w[y] - m[y], w[y0] - m[y0]
+    acts = {"수면": "S11", "일": "S2", "가사(가정관리)": "S4", "문화·여가": "S8"}
+    change = {k: avg("S0", c)[y] - avg("S0", c)[y0] for k, c in acts.items()}
+    media = avg("S0", "S82")
+
+    topic(
+        "daily", "🕐", "한국인의 하루는 어떻게 흘러가나",
+        f"출근·잠·집안일·여가, {y0}년부터 {y}년까지의 하루",
+        "통계청 생활시간조사 (KOSIS)",
+        "https://kosis.kr/statHtml/statHtml.do?orgId=101&tblId=DT_1TS202003",
+        [
+            slider("dl1", f"{y}년 평일, 출근하는 사람은 출근길에 평균 몇 분을 쓸까요?",
+                   commute[y], "분", 10, 90, 1,
+                   f"{y}년 평일 출근 {commute[y]}분 · 퇴근 {back[y]}분 "
+                   "(그날 출근한 사람만의 평균)",
+                   "'출근에 한 시간'은 수도권의 이야기일 수 있습니다. 전국 평균은 모든 "
+                   "지역을 섞은 값입니다."),
+            slider("dl2", f"{y}년 한국인(10세 이상)의 하루 평균 수면 시간은 몇 시간일까요?",
+                   sleep[y] / 60, "시간", 4, 12, 1,
+                   f"{y}년 {hm(sleep[y])} ({y0}년 {hm(sleep[y0])})",
+                   "수면 시간에는 밤잠과 낮잠이 모두 들어갑니다. 평일과 주말도 섞여 있어 "
+                   "체감보다 길게 나옵니다."),
+            slider("dl3", f"{y}년 여자는 남자보다 집안일(가정관리)에 하루 몇 분을 더 쓸까요?",
+                   gap, "분", 0, 200, 5,
+                   f"{y}년 여자 {w[y]}분 · 남자 {m[y]}분 "
+                   f"({y0}년 여자 {w[y0]}분 · 남자 {m[y0]}분, 차이 {gap0}분)",
+                   ("차이는 줄고 있지만 여전히 큽니다." if gap < gap0 else
+                    "차이는 줄지 않았습니다.") + " 10세 이상 모두의 평균이라 집안일을 "
+                   "하지 않은 사람도 0분으로 들어 있습니다."),
+            choice("dl4", f"{y0}년부터 {y}년까지 하루 중 가장 많이 늘어난 시간은?",
+                   list(acts), max(change, key=change.get),
+                   f"{y0}→{y}년 " + " · ".join(f"{k} {v:+d}분" for k, v in change.items()),
+                   f"{y - y0}년 사이 하루 24시간의 배분이 바뀌었습니다. 무엇이 줄고 무엇이 "
+                   "늘었는지는 세어 봐야 압니다."),
+            slider("dl5", f"{y}년 한국인(10세 이상)이 미디어(방송·동영상·책·인터넷)로 "
+                          "쉬는 시간은 하루 평균 몇 분일까요?",
+                   media[y], "분", 0, 360, 5,
+                   f"{y}년 {media[y]}분 ({hm(media[y])}) · {y0}년 {media[y0]}분",
+                   "스마트폰을 보는 시간은 길게 느껴지지만, 이 숫자는 '쉬려고' 미디어를 "
+                   "쓴 시간만 셉니다. 일하거나 이동하며 본 화면은 빠집니다."),
+        ],
+        caveat="생활시간조사는 5년마다 10세 이상이 이틀 동안 쓴 시간 일지를 모은 것입니다. "
+               "하루 평균은 평일과 주말을 섞은 값이고, 출근 시간은 그날 출근한 사람만의 "
+               "평균입니다. 한 번에 한 가지 '주된 행동'만 셉니다.")
+
+
+topic_or_kept("daily", ["kosis_timeuse_all.json", "kosis_timeuse_doer.json"], build_daily)
+
+
+# ── 16. 행복 ─────────────────────────────────────────────────────
+# 점수는 '가장 좋은 삶을 10, 가장 나쁜 삶을 0 이라 할 때 지금 몇 점인가'에 스스로 답한 값
+hp = [r for r in load_csv("happiness.csv") if r["cantril_ladder_score"]]
+h_y = max(int(r["year"]) for r in hp if r["code"] == "KOR")
+H = owid_countries(hp, h_y, "cantril_ladder_score")
+h_rank = sorted(H, key=H.get, reverse=True)
+kor_h = H["South Korea"]
+kor_hr = h_rank.index("South Korea") + 1
+gd = [r for r in load_csv("gdp_pcap_ppp.csv") if r["ny_gdp_pcap_pp_kd"]]
+gd_y = max(int(r["year"]) for r in gd if r["code"] == "KOR" and int(r["year"]) <= h_y)
+GD = owid_countries(gd, gd_y, "ny_gdp_pcap_pp_kd")
+both = [c for c in H if c in GD]
+rich_rank = sorted(both, key=GD.get, reverse=True)
+richest = rich_rank[0]
+asia4 = ["South Korea", "Japan", "United States", "Taiwan"]
+HAPPY_KO = {"Finland": "핀란드", "Iceland": "아이슬란드", "Denmark": "덴마크",
+            "Costa Rica": "코스타리카", "Sweden": "스웨덴", "Norway": "노르웨이",
+            "Netherlands": "네덜란드", "Israel": "이스라엘", "Mexico": "멕시코",
+            "Switzerland": "스위스", "Luxembourg": "룩셈부르크", "Australia": "호주",
+            "New Zealand": "뉴질랜드", "South Korea": "한국", "Japan": "일본",
+            "United States": "미국", "Taiwan": "대만", "Afghanistan": "아프가니스탄",
+            "Sierra Leone": "시에라리온", "Lebanon": "레바논", "Malawi": "말라위",
+            "Singapore": "싱가포르", "Ireland": "아일랜드", "Qatar": "카타르",
+            "United Arab Emirates": "아랍에미리트", "Macao": "마카오", "Bahrain": "바레인",
+            "Kuwait": "쿠웨이트", "Saudi Arabia": "사우디아라비아", "Belgium": "벨기에",
+            "Austria": "오스트리아", "Germany": "독일", "Hong Kong": "홍콩"}
+
+
+def hko(c):
+    return HAPPY_KO.get(c, c)
+
+
+h_top4 = h_rank[:4]
+for c in h_top4 + asia4 + rich_rank[:3]:
+    assert c in HAPPY_KO, f"{c}: HAPPY_KO 에 한국어 이름을 넣으세요"
+
+topic(
+    "happiness", "😊", "한국인은 행복할까",
+    "나라별 삶 만족도와 소득",
+    "World Happiness Report (Our World in Data)",
+    "https://ourworldindata.org/grapher/happiness-cantril-ladder",
+    [
+        slider("hp1", f"{h_y}년 한국인의 삶 만족도는 0~10점 중 몇 점일까요?",
+               kor_h, "점", 0, 10, 1,
+               f"{h_y}년 한국 {kor_h:.2f}점 · 1위 {hko(h_rank[0])} {H[h_rank[0]]:.2f}점 · "
+               f"꼴찌 {hko(h_rank[-1])} {H[h_rank[-1]]:.2f}점",
+               "이 점수는 '가장 좋은 삶을 10점이라 할 때 지금 몇 점인가'에 스스로 답한 "
+               "값입니다. 행복을 재는 방법에 따라 숫자가 달라집니다."),
+        slider("hp2", f"한국의 삶 만족도는 {len(H)}개국 중 몇 위일까요?",
+               kor_hr, "위", 1, len(H), 1,
+               f"{h_y}년 {len(H)}개국 중 {kor_hr}위",
+               "경제 순위만큼 높을 거라고 짐작하기 쉽습니다."),
+        choice("hp3", "삶 만족도가 가장 높은 나라는?",
+               sorted(hko(c) for c in h_top4), hko(h_rank[0]),
+               f"{h_y}년 " + " · ".join(f"{i + 1}위 {hko(c)} {H[c]:.2f}"
+                                        for i, c in enumerate(h_rank[:5])),
+               "부유한 나라 순서와 행복한 나라 순서는 같지 않습니다."),
+        choice("hp4", "한국·일본·미국·대만 중 삶 만족도가 가장 높은 나라는?",
+               [hko(c) for c in asia4], hko(max(asia4, key=H.get)),
+               " · ".join(f"{hko(c)} {H[c]:.2f}점 ({h_rank.index(c) + 1}위)" for c in asia4),
+               "이웃 나라끼리도 차이가 큽니다. 소득이 비슷해도 만족도는 다릅니다."),
+        slider("hp5", f"1인당 소득이 가장 높은 나라({hko(richest)})는 삶 만족도 "
+                      f"{len(H)}개국 중 몇 위일까요?",
+               h_rank.index(richest) + 1, "위", 1, len(H), 1,
+               f"{gd_y}년 1인당 GDP(구매력 기준) 1~3위 "
+               + " · ".join(f"{hko(c)} {GD[c]:,.0f}달러(만족도 {h_rank.index(c) + 1}위)"
+                            for c in rich_rank[:3]),
+               "돈은 행복을 늘리지만, 가장 부유한 나라가 가장 행복한 나라는 아닙니다."
+               if h_rank[0] != richest else "이번에는 가장 부유한 나라가 가장 행복한 "
+               "나라이기도 합니다."),
+    ],
+    caveat="나라마다 해마다 약 1천 명에게 물은 갤럽 세계 조사를 3년치 묶은 평균이라, "
+           "한 해의 사건보다 흐름을 보여 줍니다. 1인당 GDP는 물가 차이를 맞춘 구매력(PPP) "
+           "기준입니다. 순위는 이 자료에 점수가 있는 나라끼리만 매긴 것입니다.")
+
+
+# ── 17. 술 ───────────────────────────────────────────────────────
+# WHO 추정치: 15세 이상 1명이 1년에 마시는 순수 알코올(L). 술 종류와 도수를 모두 맞춘 값
+al = [r for r in load_csv("alcohol.csv") if r["sh_alc_pcap_li"]]
+al_y = max(int(r["year"]) for r in al if r["code"] == "KOR")
+AL = owid_countries(al, al_y, "sh_alc_pcap_li")
+al_rank = sorted(AL, key=AL.get, reverse=True)
+kor_al = AL["South Korea"]
+_kal = {int(r["year"]): float(r["sh_alc_pcap_li"]) for r in al if r["code"] == "KOR"}
+al_y0 = al_y - 20
+al_drop = (1 - kor_al / _kal[al_y0]) * 100
+# 1위와 함께 '술 하면 떠오르는' 나라를 보기로 둔다. 1위가 그중 하나면 다음 순위로 채운다
+al_opts = [al_rank[0]] + [c for c in ("Russia", "Ireland", "South Korea") if c != al_rank[0]]
+al_opts += [c for c in al_rank[1:] if c not in al_opts][:4 - len(al_opts)]
+al4 = ["South Korea", "Japan", "China", "United States"]
+ALC_KO = {"Romania": "루마니아", "Georgia": "조지아", "Latvia": "라트비아",
+          "Lithuania": "리투아니아", "Czechia": "체코", "Germany": "독일", "Russia": "러시아",
+          "Ireland": "아일랜드", "South Korea": "한국", "Japan": "일본", "China": "중국",
+          "United States": "미국", "France": "프랑스", "Poland": "폴란드"}
+for c in al_opts + al4 + al_rank[:3]:
+    assert c in ALC_KO, f"{c}: ALC_KO 에 한국어 이름을 넣으세요"
+
+topic(
+    "alcohol", "🍺", "누가 제일 많이 마시나",
+    "나라별 1인당 알코올 소비량",
+    "WHO (Our World in Data)",
+    "https://ourworldindata.org/grapher/total-alcohol-consumption-per-capita-litres-of-pure-alcohol",
+    [
+        slider("al1", f"{al_y}년 한국의 15세 이상 1인당 연간 순수 알코올 소비량은 몇 L일까요?",
+               kor_al, "L", 0, 20, 1,
+               f"{al_y}년 한국 {kor_al:.2f}L · 세계 1위 {ALC_KO[al_rank[0]]} "
+               f"{AL[al_rank[0]]:.1f}L",
+               "소주·맥주가 아니라 그 안에 든 '순수 알코올'만 셉니다. 소주 한 병"
+               f"(360mL·16도)에는 {360 * 0.16:.0f}mL가 들어 있어, {kor_al:.1f}L는 소주 약 "
+               f"{kor_al * 1000 / (360 * 0.16):.0f}병입니다."),
+        slider("al2", f"한국은 {len(AL)}개국 중 술을 몇 번째로 많이 마실까요?",
+               al_rank.index("South Korea") + 1, "위", 1, len(AL), 1,
+               f"{al_y}년 {len(AL)}개국 중 {al_rank.index('South Korea') + 1}위",
+               "'한국은 술을 많이 마신다'는 인상과 실제 순위는 다를 수 있습니다. "
+               "회식 문화가 눈에 띄는 것과 총량은 다른 이야기입니다."),
+        choice("al3", "1인당 알코올 소비량이 가장 많은 나라는?",
+               sorted(ALC_KO[c] for c in al_opts), ALC_KO[al_rank[0]],
+               f"{al_y}년 " + " · ".join(f"{i + 1}위 {ALC_KO.get(c, c)} {AL[c]:.1f}L"
+                                        for i, c in enumerate(al_rank[:3]))
+               + " … " + " · ".join(f"{ALC_KO[c]} {al_rank.index(c) + 1}위"
+                                    for c in al_opts if c not in al_rank[:3]),
+               "'술 하면 떠오르는 나라'와 실제 1위는 다릅니다. 상위권은 대개 "
+               "동유럽 나라들입니다."),
+        choice("al4", "한국·일본·중국·미국 중 1인당 알코올 소비량이 가장 많은 나라는?",
+               [ALC_KO[c] for c in al4], ALC_KO[max(al4, key=AL.get)],
+               " · ".join(f"{ALC_KO[c]} {AL[c]:.1f}L ({al_rank.index(c) + 1}위)" for c in al4),
+               "독한 술을 마시는 나라가 더 많이 마실 것 같지만, 순수 알코올로 바꾸면 "
+               "순서가 달라집니다."),
+        slider("al5", f"{al_y}년 한국의 1인당 알코올 소비량은 {al_y0}년보다 몇 % 줄었을까요?",
+               al_drop, "%", 0, 80, 1,
+               f"{al_y0}년 {_kal[al_y0]:.2f}L → {al_y}년 {kor_al:.2f}L ({-al_drop:+.0f}%)",
+               "회식이 줄고 술을 덜 권하는 분위기가 숫자에도 나타납니다. 다만 "
+               f"{al_y}년은 코로나19로 술집 영업이 줄어든 해이기도 합니다."
+               if al_y == 2020 else
+               "회식이 줄고 술을 덜 권하는 분위기가 숫자에도 나타납니다."),
+    ],
+    caveat="WHO 추정치로, 판매 기록에 밀주·여행객 몫 같은 기록되지 않은 소비를 더한 "
+           "값입니다. 15세 이상 인구로 나눈 평균이라 마시지 않는 사람도 들어 있습니다. "
+           "나라마다 집계 방식이 달라 작은 차이로 순위를 가르기는 어렵습니다.")
+
+
+# ── 18. 올림픽 ───────────────────────────────────────────────────
+# 위키백과 문서에는 표가 여러 개다. 표마다 바로 위의 제목(h2·h3)을 같이 모아 이름으로 찾는다
+class _Tables(HTMLParser):
+    """문서의 최상위 표를 모두 모은다. {제목: [[칸 글자, ...], ...]} — 각주(<sup>)는 뺀다."""
+
+    def __init__(self):
+        super().__init__()
+        self.depth, self.skip, self.head, self.inh = 0, 0, "", None
+        self.tables, self.cell = [], None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("h2", "h3", "h4") and self.depth == 0:
+            self.inh = ""
+        if tag == "table":
+            self.depth += 1
+            if self.depth == 1:
+                self.tables.append((self.head, []))
+        if self.depth != 1:
+            return
+        if tag == "tr":
+            self.tables[-1][1].append([])
+        elif tag in ("td", "th"):
+            self.cell = ""
+        elif tag in ("sup", "style"):
+            self.skip += 1
+
+    def handle_endtag(self, tag):
+        if tag in ("h2", "h3", "h4") and self.inh is not None:
+            self.head, self.inh = " ".join(self.inh.split()), None
+        if tag == "table":
+            self.depth -= 1
+        elif self.depth == 1:
+            if tag in ("td", "th") and self.cell is not None and self.tables[-1][1]:
+                self.tables[-1][1][-1].append(" ".join(self.cell.split()))
+                self.cell = None
+            elif tag in ("sup", "style"):
+                self.skip -= 1
+
+    def handle_data(self, s):
+        if self.inh is not None:
+            self.inh += s
+        if self.cell is not None and not self.skip:
+            self.cell += s
+
+
+def wiki_table(name, head):
+    """제목이 head 로 시작하는 첫 표."""
+    t = _Tables()
+    t.feed(load_json(name)["parse"]["text"]["*"])
+    for h, rows in t.tables:
+        if h.startswith(head):
+            return rows
+    raise ValueError(f"{name}: '{head}' 표를 찾지 못했습니다 — 문서 모양이 바뀌었습니다")
+
+
+def num(s):
+    return int(s.replace(",", "") or 0)
+
+
+SPORT_KO = {"Archery": "양궁", "Taekwondo": "태권도", "Judo": "유도", "Shooting": "사격",
+            "Wrestling": "레슬링", "Fencing": "펜싱", "Badminton": "배드민턴",
+            "Weightlifting": "역도", "Boxing": "복싱", "Table tennis": "탁구",
+            "Short track speed skating": "쇼트트랙"}
+
+_ss = wiki_table("olympics_korea.json", "Medals by summer sport")
+_ws = wiki_table("olympics_korea.json", "Medals by winter sport")
+assert _ss[0][:2] == ["Sport", "Gold"], "종목별 메달 표 모양이 바뀌었습니다"
+
+
+def by_sport(rows):
+    """종목 → 금메달. 합계 줄은 뺀다."""
+    return {r[0]: num(r[1]) for r in rows[1:]
+            if len(r) >= 5 and r[1].isdigit() and not r[0].startswith("Total")}
+
+
+SUM_SPORT = by_sport(_ss)
+WIN_SPORT = by_sport(_ws)
+sum_gold = sum(SUM_SPORT.values())
+win_gold = sum(WIN_SPORT.values())
+ol_top = sorted(SUM_SPORT, key=SUM_SPORT.get, reverse=True)
+for c in ol_top[:4]:
+    assert c in SPORT_KO, f"{c}: SPORT_KO 에 한국어 이름을 넣으세요"
+st = "Short track speed skating"
+st_share = WIN_SPORT[st] / win_gold * 100
+
+# 대회별 순위. '1912–1936 as part of Japan' 같은 줄과 합계 줄은 숫자 순위가 없어 빠진다
+_sg = wiki_table("olympics_korea.json", "Medals by Summer Games")
+GAMES = {r[0]: num(r[6]) for r in _sg[1:] if len(r) >= 7 and r[6].isdigit()}
+best = min(GAMES, key=GAMES.get)
+
+# 역대 하계 메달표(금메달 순). 소련처럼 없어진 나라도 순위에 들어 있다
+_at = wiki_table("olympics_alltime.json", "Summer Olympics (")
+assert _at[0][:3] == ["Rank", "NOC", "Gold"], "역대 메달표 모양이 바뀌었습니다"
+AT = {r[1].rstrip("*"): (r[0], num(r[2])) for r in _at[1:] if len(r) >= 6}
+kor_at_rank, kor_at_gold = AT["South Korea"]
+assert kor_at_gold == sum_gold, (f"두 문서의 한국 하계 금메달 수가 다릅니다: "
+                                 f"종목별 {sum_gold} · 역대표 {kor_at_gold}")
+
+topic(
+    "olympics", "🏅", "올림픽 메달",
+    "한국은 무엇으로, 얼마나 땄나",
+    "Wikipedia (South Korea at the Olympics · All-time Olympic Games medal table)",
+    "https://en.wikipedia.org/wiki/South_Korea_at_the_Olympics",
+    [
+        choice("ol1", "한국이 하계올림픽에서 금메달을 가장 많이 딴 종목은?",
+               sorted(SPORT_KO[c] for c in ol_top[:4]), SPORT_KO[ol_top[0]],
+               " · ".join(f"{SPORT_KO[c]} {SUM_SPORT[c]}개" for c in ol_top[:4]),
+               "가장 먼저 떠오르는 종목이 맞을 때도 있습니다. 2위와의 차이까지 "
+               "짐작했는지가 감입니다."),
+        slider("ol2", "한국이 하계올림픽에서 딴 금메달은 모두 몇 개일까요?",
+               sum_gold, "개", 0, 300, 1,
+               f"종목별 금메달을 모두 더하면 {sum_gold}개 "
+               f"(그중 {SPORT_KO[ol_top[0]]} {SUM_SPORT[ol_top[0]]}개)",
+               "메달 소식은 대회마다 크게 남지만, 모두 합친 수는 감으로 잡기 어렵습니다."),
+        slider("ol3", "한국의 동계올림픽 금메달 중 쇼트트랙이 차지하는 비율은?",
+               st_share, "%", 0, 100, 1,
+               f"동계 금메달 {win_gold}개 중 쇼트트랙 {WIN_SPORT[st]}개",
+               "'동계는 쇼트트랙'이라는 말은 맞지만, 얼마나 쏠려 있는지는 세어 봐야 "
+               "압니다."),
+        slider("ol4", "한국의 하계올림픽 역대 최고 순위는 몇 위일까요?",
+               GAMES[best], "위", 1, 30, 1,
+               f"{best.replace('Seoul', '서울')} 대회 {GAMES[best]}위 · 대회별 순위는 "
+               "금메달 수 기준",
+               "안방에서 열린 대회의 성적이 가장 좋은 경우가 많습니다."
+               if "Seoul" in best else "최고 성적은 기억에 남는 대회와 다를 수 있습니다."),
+        slider("ol5", "역대 하계올림픽 금메달 순위에서 한국은 몇 위일까요?",
+               int(kor_at_rank), "위", 1, 50, 1,
+               f"역대 하계 금메달 순 {kor_at_rank}위 (금 {kor_at_gold}개). 소련처럼 "
+               f"지금은 없는 나라도 순위에 들어 있습니다",
+               "한 대회 순위는 높아도 역대 순위는 오래 출전한 나라가 앞섭니다."),
+    ],
+    caveat="위키백과 문서는 누구나 고칠 수 있고, 금지약물로 박탈된 메달이 나중에 "
+           "반영되기도 해 받은 시점에 따라 숫자가 달라질 수 있습니다. 순위는 금메달 수 "
+           "기준입니다. 종목별 금메달 합계와 역대 메달표의 한국 금메달 수가 같은지 "
+           "확인한 뒤에 씁니다.")
+
+
+# ── 19. 로또 ─────────────────────────────────────────────────────
+# 회차마다 본번호 6개 + 보너스 1개. 출현 횟수는 본번호만 센다
+def ymd(s):
+    return f"{s[:4]}.{int(s[4:6])}.{int(s[6:])}"
+
+
+def build_lotto():
+    LT = load_json("lotto.json")
+    lt_n = len(LT)
+    lt_d0, lt_d1 = LT[0]["ltRflYmd"], LT[-1]["ltRflYmd"]
+    balls = Counter(r[f"tm{i}WnNo"] for r in LT for i in range(1, 7))
+    lt_top = leaders(balls)
+    lt_min = min(balls.values())
+    lt_expect = lt_n * 6 / 45
+    # 완전히 무작위일 때 한 번호의 출현 횟수가 흔들리는 폭(표준편차)
+    lt_sd = (lt_n * 6 / 45 * (1 - 6 / 45)) ** 0.5
+    # 보기: 가장 많이 나온 번호와 '행운의 7' 같은 흔히 고르는 번호.
+    # 순서로 정답이 드러나지 않게 작은 순으로 둔다
+    _decoys = [x for x in (7, 1, 45, 13) if x not in lt_top]
+    lt_opts = sorted(lt_top + _decoys[:max(0, 4 - len(lt_top))])
+    won1 = [r for r in LT if r["rnk1WnNope"] > 0]
+    lt_avg = mean(r["rnk1WnAmt"] for r in won1) / 1e8                     # 억 원
+    lt_most = max(LT, key=lambda r: r["rnk1WnNope"])
+    lt_carry = sum(1 for r in LT if r["rnk1WnNope"] == 0)
+
+    topic(
+        "lotto", "🎰", "로또, 정말 랜덤일까",
+        f"{ymd(lt_d0)}부터 {ymd(lt_d1)}까지 {lt_n:,}회의 당첨번호",
+        "동행복권 로또 6/45 당첨결과",
+        "https://www.dhlottery.co.kr/lt645/result",
+        [
+            choice("lt1", f"{lt_n:,}회 동안 가장 많이 나온 번호는?",
+                   [str(x) for x in lt_opts], [str(x) for x in lt_top],
+                   " · ".join(f"{x}번 {balls[x]}회" for x in lt_opts)
+                   + f" (번호 하나 평균 {lt_expect:.0f}회)",
+                   "'7'처럼 행운의 번호가 더 자주 나올 것 같지만, 추첨기는 번호의 뜻을 "
+                   "모릅니다.",
+                   hint=f"힌트: 번호 하나는 평균 {lt_expect:.0f}번 나왔습니다"),
+            slider("lt2", "1등 당첨금은 1명당 평균 몇 억 원일까요?",
+                   lt_avg, "억 원", 0, 100, 1,
+                   f"1등이 나온 {len(won1):,}회의 1인당 1등 당첨금 평균 {lt_avg:.1f}억 원 "
+                   "(세금 떼기 전)",
+                   "'로또 1등 = 수십억'이라는 인상은 초기 회차의 큰 당첨금에서 왔습니다. "
+                   "당첨자가 여럿이면 나눠 갖습니다."),
+            slider("lt3", "한 회차에 1등이 가장 많이 나온 때는 몇 명이었을까요?",
+                   lt_most["rnk1WnNope"], "명", 0, max(100, lt_most["rnk1WnNope"] + 20), 1,
+                   f"{lt_most['ltEpsd']}회({ymd(lt_most['ltRflYmd'])}) 1등 "
+                   f"{lt_most['rnk1WnNope']}명, 1인당 {lt_most['rnk1WnAmt'] / 1e8:.1f}억 원",
+                   "많은 사람이 같은 번호를 고르면 1등이 한꺼번에 쏟아집니다. 번호는 무작위여도 "
+                   "사람이 고르는 번호는 무작위가 아닙니다."),
+            slider("lt4", f"{lt_n:,}회 중 1등이 한 명도 없어 당첨금이 다음 회로 넘어간 회차는?",
+                   lt_carry, "회", 0, 50, 1,
+                   f"1등 당첨자 0명인 회차 {lt_carry}회",
+                   "1등 확률은 낮지만 사는 사람이 많아 대부분의 회차에서 누군가는 당첨됩니다."),
+            slider("lt5", "가장 많이 나온 번호는 가장 적게 나온 번호보다 몇 번 더 나왔을까요?",
+                   balls[lt_top[0]] - lt_min, "번", 0, 150, 1,
+                   f"가장 많이 {balls[lt_top[0]]}회 ({', '.join(f'{x}번' for x in lt_top)}) · "
+                   f"가장 적게 {lt_min}회 "
+                   f"({', '.join(f'{x}번' for x, c in sorted(balls.items()) if c == lt_min)})",
+                   f"완전히 무작위여도 번호마다 평균 {lt_expect:.0f}회에서 ±{lt_sd:.0f}회쯤 "
+                   "흔들리고, 45개 중 가장 많은 것과 가장 적은 것은 그보다 훨씬 벌어집니다. "
+                   "차이가 있다고 '잘 나오는 번호'가 있는 것은 아닙니다."),
+        ],
+        caveat="동행복권 공식 내려받기가 없어져, 결과 화면이 쓰는 내부 주소에서 받은 "
+               "값입니다. 당첨금은 세금을 떼기 전 금액이고 물가를 반영하지 않았습니다. "
+               "출현 횟수는 보너스 번호를 빼고 셉니다.")
+
+
+topic_or_kept("lotto", ["lotto.json"], build_lotto)
+
+
+# ── 20. 출근길 지하철 ────────────────────────────────────────────
+# 한 달치 교통카드 승하차를 역×노선×시간대로 준다. HR_8_GET_ON_NOPE = 8시~9시 승차.
+# 환승역은 개찰구를 같이 쓰는 노선 하나에 몰아 잡히기도 한다(충무로 3호선은 거의 0,
+# 4호선에 다 잡힌다). 그래서 노선을 가리지 않고 역 이름으로 합친다
+def build_subway():
+    import calendar
+
+    rows = load_json("seoul_subway_hourly.json")["CardSubwayTime"]["row"]
+    ym = rows[0]["USE_MM"]
+    days = calendar.monthrange(int(ym[:4]), int(ym[4:]))[1]
+
+    def name(s):                                    # 잠실(송파구청) → 잠실
+        return re.sub(r"\(.*\)", "", s).strip()
+
+    def per_day(hours, kinds):
+        """역 이름별 하루 평균 인원. hours 시간대, kinds 는 ON·OFF 중 무엇을 셀지."""
+        out = Counter()
+        for r in rows:
+            out[name(r["STTN"])] += sum(r[f"HR_{h}_GET_{k}_NOPE"] for h in hours for k in kinds)
+        return {k: v / days for k, v in out.items()}
+
+    def top(d, n=4):
+        return sorted(d, key=d.get, reverse=True)[:n]
+
+    def ppl(v):
+        return f"{v / 10_000:.1f}만 명"
+
+    busy = per_day(range(24), ("ON", "OFF"))
+    rides = sum(per_day(range(24), ("ON",)).values())
+    by_hour = {h: sum(per_day([h], ("ON",)).values()) for h in range(24)}
+    peak_h = max(by_hour, key=by_hour.get)
+    hour_opts = [7, 8, 17, 18]
+    assert peak_h in hour_opts, f"승차가 가장 많은 시간 {peak_h}시가 보기에 없습니다"
+    am_off = per_day([7, 8], ("OFF",))
+    am_on = per_day([7, 8], ("ON",))
+    # 가장 붐비는 역 보기: 상위 3곳 + '강남'(흔히 1위로 짐작하는 역)
+    busy_opts = top(busy, 3) + (["강남"] if "강남" not in top(busy, 3) else top(busy)[3:])
+
+    def hr(h):
+        return f"{h}~{h + 1}시"
+
+    topic(
+        "subway", "🚇", "출근길 지하철",
+        f"{ym[:4]}년 {int(ym[4:])}월 서울 지하철 역별·시간대별 승하차",
+        "서울 열린데이터광장 (지하철 시간대별 승하차 인원)",
+        "https://data.seoul.go.kr/",
+        [
+            choice("sb1", "하루 승하차 인원이 가장 많은 역은?",
+                   sorted(busy_opts), top(busy, 1)[0],
+                   f"{ym[:4]}년 {int(ym[4:])}월 하루 평균 승하차 " + " · ".join(
+                       f"{s} {ppl(busy[s])}" for s in top(busy, 5)),
+                   "가장 붐빈다고 느끼는 역과 실제로 사람이 가장 많이 드나드는 역은 "
+                   "다를 수 있습니다. 여러 노선이 만나는 역은 이용객이 합쳐집니다."),
+            slider("sb2", "서울 지하철을 하루에 타는 사람은 평균 몇 만 명일까요?",
+                   rides / 10_000, "만 명", 100, 1500, 10,
+                   f"{ym[:4]}년 {int(ym[4:])}월 승차 인원 ÷ {days}일 = 하루 {ppl(rides)} "
+                   "(개찰구를 지날 때마다 1번, 환승은 세지 않음)",
+                   "서울 인구와 견주어 보면 크기가 와닿습니다. 다만 한 사람이 하루 두세 번 "
+                   "타면 그만큼 겹쳐 셉니다."),
+            choice("sb3", "하루 중 지하철 승차가 가장 많은 시간대는?",
+                   [hr(h) for h in hour_opts], hr(peak_h),
+                   " · ".join(f"{hr(h)} {ppl(by_hour[h])}" for h in hour_opts),
+                   "출근길이 더 붐빈다고 느끼지만, 저녁에는 퇴근에 학교·약속·장보기 이동까지 "
+                   "겹칩니다." if peak_h >= 17 else
+                   "출근 시간은 정해져 있어 한꺼번에 몰리고, 퇴근 시간은 사람마다 흩어집니다."),
+            choice("sb4", "출근 시간(7~9시)에 내리는 사람이 가장 많은 역은?",
+                   sorted(top(am_off)), top(am_off, 1)[0],
+                   "7~9시 하루 평균 하차 " + " · ".join(
+                       f"{s} {am_off[s]:,.0f}명" for s in top(am_off, 5)),
+                   "출근길 하차가 많은 역은 일터가 몰린 곳입니다. 강남 말고도 큰 업무 "
+                   "지구가 여럿 있습니다."),
+            choice("sb5", "출근 시간(7~9시)에 타는 사람이 가장 많은 역은?",
+                   sorted(top(am_on)), top(am_on, 1)[0],
+                   "7~9시 하루 평균 승차 " + " · ".join(
+                       f"{s} {am_on[s]:,.0f}명" for s in top(am_on, 5)),
+                   "출근길 승차가 많은 역은 사람이 많이 사는 곳, 또는 다른 교통에서 "
+                   "갈아타는 곳입니다."),
+        ],
+        caveat="교통카드로 개찰구를 지난 기록입니다. 지하철 안에서 갈아탄 것은 세지 않고, "
+               "환승역은 개찰구를 함께 쓰는 노선 하나에 몰아 잡히기도 해 역 이름으로 "
+               "합쳐 셉니다. 서울 시내 역만 들어 있으며 주말을 포함한 한 달 평균입니다.")
+
+
+topic_or_kept("subway", ["seoul_subway_hourly.json"], build_subway)
+
 
 # ════════════════════════════════════════════════════════════════
 def shown(q):
@@ -885,8 +1742,11 @@ def main() -> None:
         pack["questions"] = t["questions"]
         io.open(OUT / f"{t['id']}.json", "w", encoding="utf-8").write(
             json.dumps(pack, ensure_ascii=False, indent=2))
-        index.append({k: t[k] for k in ("id", "emoji", "title", "blurb",
-                                        "source")})
+        if t["id"] in SHOWN:
+            index.append({k: t[k] for k in ("id", "emoji", "title", "blurb",
+                                            "source")})
+    missing = SHOWN - {t["id"] for t in TOPICS}
+    assert not missing, f"SHOWN 에 없는 주제가 있습니다: {missing}"
 
     # 제목·부제는 화면을 바꾸며 고친 값을 지킨다 (2장에서 내 제목으로 바꾼다).
     # 다시 계산해도 내 제목이 «감 테스트»로 돌아가지 않게, 있던 값을 읽어 쓴다
@@ -935,8 +1795,10 @@ def main() -> None:
     io.open(HERE / "정답지.md", "w", encoding="utf-8").write("\n".join(md))
 
     print(f"주제 {len(TOPICS)}개 · 문항 {sum(len(t['questions']) for t in TOPICS)}개")
+    print(f"화면에 보이는 주제 {len(index)}개 · 숨긴 주제 {len(TOPICS) - len(index)}개 (SHOWN)")
     for t in TOPICS:
-        print(f"\n{t['emoji']} {t['title']}  ({t['source']})")
+        hide = "" if t["id"] in SHOWN else "  [숨김]"
+        print(f"\n{t['emoji']} {t['title']}  ({t['source']}){hide}")
         for q in t["questions"]:
             a = shown(q)
             print(f"    [{q['type'][:6]:<6}] {q['text'][:44]:<44} → {a}")

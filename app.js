@@ -134,6 +134,8 @@ function renderQ() {
   $("progress-bar").style.width = `${(idx / PACK.questions.length) * 100}%`;
   $("q-count").textContent = `${idx + 1} / ${PACK.questions.length}`;
   $("q-text").textContent = q.text;
+  $("q-hint").textContent = q.hint || "";      // 힌트는 있는 문항에만
+  $("q-hint").hidden = !q.hint;
   $("btn-next").textContent =
     idx === PACK.questions.length - 1 ? "결과 보기" : "다음";
 

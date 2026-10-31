@@ -1,6 +1,6 @@
 {
-  "title": "출근길 감 테스트",
-  "subtitle": "출근길 숫자, 당신의 감은 몇 점?",
+  "title": "당신의 직감과 상식은 얼마나 맞는가?",
+  "subtitle": "출퇴근길, 당신의 직감은 몇 점?",
   "grades": [
     {
       "min": 90,
@@ -52,81 +52,74 @@
   ],
   "topics": [
     {
-      "id": "seoul-heat",
-      "emoji": "🌡️",
-      "title": "서울은 얼마나 더워졌나",
-      "blurb": "1950년부터 2024년까지, 서울의 매일 기온",
-      "source": "Open-Meteo Archive (ERA5 재분석)"
-    },
-    {
-      "id": "seoul-rain",
-      "emoji": "☔",
-      "title": "비는 언제, 얼마나",
-      "blurb": "서울의 하루치 강수량 30년",
-      "source": "Open-Meteo Archive (ERA5 재분석)"
-    },
-    {
-      "id": "seoul-air",
-      "emoji": "😷",
-      "title": "미세먼지, 언제 나쁜가",
-      "blurb": "서울의 시간별 초미세먼지 2년치",
-      "source": "Open-Meteo Air Quality (CAMS)"
-    },
-    {
-      "id": "working-hours",
-      "emoji": "⏰",
-      "title": "우리는 얼마나 일하나",
-      "blurb": "나라별 1인당 연간 노동시간",
-      "source": "Our World in Data"
-    },
-    {
-      "id": "population",
-      "emoji": "👶",
-      "title": "인구와 출산",
-      "blurb": "전 세계 출산율과 한국의 인구 구조",
-      "source": "World Bank Open Data"
-    },
-    {
-      "id": "internet",
-      "emoji": "🌐",
-      "title": "인터넷과 연결",
-      "blurb": "나라별 인터넷 사용 인구 비율",
-      "source": "World Bank Open Data"
-    },
-    {
-      "id": "usdkrw",
-      "emoji": "💵",
-      "title": "원달러 환율 26년",
-      "blurb": "1999년부터 오늘까지의 원달러 환율",
-      "source": "Frankfurter (유럽중앙은행 고시)"
-    },
-    {
-      "id": "cities",
-      "emoji": "🏙️",
-      "title": "서울·도쿄·런던·싱가포르",
-      "blurb": "네 도시의 30년 평년값 (1991~2020)",
-      "source": "Open-Meteo Archive (ERA5 재분석)"
-    },
-    {
-      "id": "quakes",
-      "emoji": "🌎",
-      "title": "지진은 얼마나 자주",
-      "blurb": "2000~2024년 전 세계 지진 기록",
-      "source": "USGS 지진 카탈로그"
-    },
-    {
-      "id": "life",
-      "emoji": "🩺",
-      "title": "얼마나 오래 사나",
-      "blurb": "나라별 기대수명 1950~현재",
-      "source": "Our World in Data"
-    },
-    {
       "id": "miss-universe",
       "emoji": "👑",
       "title": "미스 유니버스는 어디서 이기나",
       "blurb": "1952년부터 2025년까지, 미스 유니버스 우승자와 출전국",
       "source": "Wikipedia (List of Miss Universe titleholders)"
+    },
+    {
+      "id": "money",
+      "emoji": "💰",
+      "title": "돈, 다른 사람들은 얼마나 벌까",
+      "blurb": "내 월급의 세계 순위부터 나라별 국민소득까지",
+      "source": "World Bank (PIP · Open Data) · 통계청 가계금융복지조사"
+    },
+    {
+      "id": "prices",
+      "emoji": "🍜",
+      "title": "짜장면 값은 얼마나 올랐나",
+      "blurb": "1995년부터 2025년까지, 30년 동안 오른 것과 내린 것",
+      "source": "통계청 소비자물가조사 (KOSIS)"
+    },
+    {
+      "id": "marriage",
+      "emoji": "💍",
+      "title": "결혼과 이혼",
+      "blurb": "언제 결혼하고, 얼마나 결혼하고, 언제 헤어지나",
+      "source": "통계청 인구동향조사 (KOSIS)"
+    },
+    {
+      "id": "daily",
+      "emoji": "🕐",
+      "title": "한국인의 하루는 어떻게 흘러가나",
+      "blurb": "출근·잠·집안일·여가, 1999년부터 2024년까지의 하루",
+      "source": "통계청 생활시간조사 (KOSIS)"
+    },
+    {
+      "id": "happiness",
+      "emoji": "😊",
+      "title": "한국인은 행복할까",
+      "blurb": "나라별 삶 만족도와 소득",
+      "source": "World Happiness Report (Our World in Data)"
+    },
+    {
+      "id": "alcohol",
+      "emoji": "🍺",
+      "title": "누가 제일 많이 마시나",
+      "blurb": "나라별 1인당 알코올 소비량",
+      "source": "WHO (Our World in Data)"
+    },
+    {
+      "id": "olympics",
+      "emoji": "🏅",
+      "title": "올림픽 메달",
+      "blurb": "한국은 무엇으로, 얼마나 땄나",
+      "source": "Wikipedia (South Korea at the Olympics · All-time Olympic Games medal table)"
+    },
+    {
+      "id": "lotto",
+      "emoji": "🎰",
+      "title": "로또, 정말 랜덤일까",
+      "blurb": "2002.12.7부터 2026.10.24까지 1,247회의 당첨번호",
+      "source": "동행복권 로또 6/45 당첨결과"
+    },
+    {
+      "id": "subway",
+      "emoji": "🚇",
+      "title": "출근길 지하철",
+      "blurb": "2026년 9월 서울 지하철 역별·시간대별 승하차",
+      "source": "서울 열린데이터광장 (지하철 시간대별 승하차 인원)"
     }
   ]
 }

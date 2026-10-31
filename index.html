@@ -3,8 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>출근길 감 테스트 — 출근길 숫자, 당신의 감은 몇 점?</title>
-<meta name="description" content="공개 데이터로 만든 추측 게임. 10개 주제, 주제당 5문항.">
+<title>당신의 직감과 상식은 얼마나 맞는가? — 출퇴근길, 당신의 직감은 몇 점?</title>
+<meta name="description" content="공개 데이터로 만든 추측 게임. 미스 유니버스와 돈, 주제당 5문항.">
+<!-- 제목은 주아, 본문은 Pretendard. 못 받아 와도 기본 글꼴로 돈다 -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard-dynamic-subset.min.css">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -32,6 +36,7 @@
     <div class="progress"><div id="progress-bar"></div></div>
     <p id="q-count" class="muted small"></p>
     <h2 id="q-text"></h2>
+    <p id="q-hint" class="hint" hidden></p>
 
     <div id="q-choice" class="choices" hidden></div>
 
